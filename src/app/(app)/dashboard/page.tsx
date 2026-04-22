@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { useSession } from "next-auth/react";
 import Link from "next/link";
+import PedigreeGraph from "@/components/PedigreeGraph";
 
 interface Profile {
   id: string;
@@ -18,6 +19,7 @@ export default function DashboardPage() {
   const { data: session } = useSession();
   const [profiles, setProfiles] = useState<Profile[]>([]);
   const [loading, setLoading] = useState(true);
+  const [viewMode, setViewMode] = useState<"grid" | "network">("grid");
 
   useEffect(() => {
     fetch("/api/profiles")
@@ -36,12 +38,8 @@ export default function DashboardPage() {
 
   const getRelationIcon = (rel: string) => {
     const icons: Record<string, string> = {
-      self: "🧑",
-      spouse: "💑",
-      child: "👶",
-      parent: "👨‍🦳",
-      sibling: "👫",
-      other: "👤",
+      self: "🧑", spouse: "💑", child: "👶", parent: "👨‍🦳", sibling: "👫",
+      friend: "🤝", colleague: "💼", other: "👤",
     };
     return icons[rel] || "👤";
   };
@@ -95,14 +93,33 @@ export default function DashboardPage() {
         </div>
       </div>
 
-      <div className="section-title">👨‍👩‍👧‍👦 Family Profiles</div>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.5rem', marginTop: '2rem' }}>
+        <div className="section-title" style={{ margin: 0 }}>🌍 Network Overview</div>
+        
+        <div className="tabs" style={{ marginBottom: 0, borderBottom: 'none' }}>
+          <button 
+            className={`tab ${viewMode === 'grid' ? 'active' : ''}`}
+            onClick={() => setViewMode('grid')}
+            style={{ padding: '0.4rem 1rem' }}
+          >
+            🔲 Grid
+          </button>
+          <button 
+            className={`tab ${viewMode === 'network' ? 'active' : ''}`}
+            onClick={() => setViewMode('network')}
+            style={{ padding: '0.4rem 1rem' }}
+          >
+            🕸️ Network
+          </button>
+        </div>
+      </div>
 
       {loading ? (
         <div className="loading-center">
           <span className="loading-spinner lg" />
         </div>
-      ) : (
-        <div className="profiles-grid">
+      ) : viewMode === 'grid' ? (
+        <div className="profiles-grid animate-fade-in">
           {profiles.map((profile) => (
             <Link
               key={profile.id}
@@ -116,8 +133,8 @@ export default function DashboardPage() {
                   </div>
                   <div>
                     <div className="profile-card-name">{profile.name}</div>
-                    <div className="profile-card-relation">
-                      {profile.relationship || "Family Member"}
+                    <div className="profile-card-relation" style={{ textTransform: 'capitalize' }}>
+                      {profile.relationship || "Profile"}
                     </div>
                   </div>
                 </div>
@@ -153,9 +170,13 @@ export default function DashboardPage() {
           <Link href="/profiles?new=true" style={{ textDecoration: "none" }}>
             <div className="add-profile-card">
               <span className="icon">➕</span>
-              <span>Add Family Member</span>
+              <span>Add Profile</span>
             </div>
           </Link>
+        </div>
+      ) : (
+        <div className="animate-fade-in">
+          <PedigreeGraph profiles={profiles} />
         </div>
       )}
     </div>

@@ -17,7 +17,7 @@ export async function POST(req: NextRequest) {
   }
 
   try {
-    const { profileId, message } = await req.json();
+    const { profileId, message, sessionId: providedSessionId } = await req.json();
 
     if (!profileId || !message) {
       return NextResponse.json(
@@ -52,19 +52,34 @@ export async function POST(req: NextRequest) {
       additional_notes: profile.additional_notes as string | undefined,
     };
 
-    // Get chat history (last 20 messages for context)
+    // Determine session ID
+    let sessionId = providedSessionId;
+    if (!sessionId) {
+      sessionId = uuidv4();
+      const title = message.length > 30 ? message.substring(0, 30) + '...' : message;
+      db.prepare(
+        "INSERT INTO chat_sessions (id, profile_id, title) VALUES (?, ?, ?)"
+      ).run(sessionId, profileId, title);
+    } else {
+      // Update session timestamp
+      db.prepare(
+        "UPDATE chat_sessions SET updated_at = CURRENT_TIMESTAMP WHERE id = ?"
+      ).run(sessionId);
+    }
+
+    // Get chat history for this session (last 20 messages for context)
     const history = db
       .prepare(
-        "SELECT role, content FROM chat_messages WHERE profile_id = ? AND user_id = ? ORDER BY created_at DESC LIMIT 20"
+        "SELECT role, content FROM chat_messages WHERE session_id = ? AND user_id = ? ORDER BY created_at DESC LIMIT 20"
       )
-      .all(profileId, session.user.id) as { role: string; content: string }[];
+      .all(sessionId, session.user.id) as { role: string; content: string }[];
 
     history.reverse();
 
     // Save user message
     db.prepare(
-      "INSERT INTO chat_messages (id, profile_id, user_id, role, content) VALUES (?, ?, ?, ?, ?)"
-    ).run(uuidv4(), profileId, session.user.id, "user", message);
+      "INSERT INTO chat_messages (id, session_id, profile_id, user_id, role, content) VALUES (?, ?, ?, ?, ?, ?)"
+    ).run(uuidv4(), sessionId, profileId, session.user.id, "user", message);
 
     // Build messages array
     const config = getAiConfig(session.user.id);
@@ -104,9 +119,10 @@ export async function POST(req: NextRequest) {
         if (fullResponse) {
           try {
             db.prepare(
-              "INSERT INTO chat_messages (id, profile_id, user_id, role, content, model_used) VALUES (?, ?, ?, ?, ?, ?)"
+              "INSERT INTO chat_messages (id, session_id, profile_id, user_id, role, content, model_used) VALUES (?, ?, ?, ?, ?, ?, ?)"
             ).run(
               uuidv4(),
+              sessionId,
               profileId,
               session.user.id,
               "assistant",
@@ -125,6 +141,7 @@ export async function POST(req: NextRequest) {
         "Content-Type": "text/event-stream",
         "Cache-Control": "no-cache",
         Connection: "keep-alive",
+        "X-Session-ID": sessionId,
       },
     });
   } catch (error) {
@@ -141,17 +158,17 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
-  const profileId = req.nextUrl.searchParams.get("profileId");
-  if (!profileId) {
-    return NextResponse.json({ error: "profileId required" }, { status: 400 });
+  const sessionId = req.nextUrl.searchParams.get("sessionId");
+  if (!sessionId) {
+    return NextResponse.json({ error: "sessionId required" }, { status: 400 });
   }
 
   const db = getDb();
   const messages = db
     .prepare(
-      "SELECT * FROM chat_messages WHERE profile_id = ? AND user_id = ? ORDER BY created_at ASC"
+      "SELECT * FROM chat_messages WHERE session_id = ? AND user_id = ? ORDER BY created_at ASC"
     )
-    .all(profileId, session.user.id);
+    .all(sessionId, session.user.id);
 
   return NextResponse.json(messages);
 }

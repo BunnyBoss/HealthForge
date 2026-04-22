@@ -62,6 +62,10 @@ export default function ProfileDetailPage({ params }: { params: Promise<{ id: st
   const [activePlan, setActivePlan] = useState<Plan | null>(null);
   const [planError, setPlanError] = useState("");
 
+  // Chat Sessions state
+  const [sessions, setSessions] = useState<{id: string, title: string, updated_at: string}[]>([]);
+  const [activeSessionId, setActiveSessionId] = useState<string | null>(null);
+
   // Chat state
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [chatInput, setChatInput] = useState("");
@@ -89,12 +93,30 @@ export default function ProfileDetailPage({ params }: { params: Promise<{ id: st
         .then((data) => setPlans(Array.isArray(data) ? data : []))
         .catch(() => {});
     } else if (activeTab === "chat") {
-      fetch(`/api/chat?profileId=${id}`)
+      fetch(`/api/chat/sessions?profileId=${id}`)
+        .then((r) => r.json())
+        .then((data) => {
+          const sessionsList = Array.isArray(data) ? data : [];
+          setSessions(sessionsList);
+          if (sessionsList.length > 0 && !activeSessionId) {
+            setActiveSessionId(sessionsList[0].id);
+          }
+        })
+        .catch(() => {});
+    }
+  }, [activeTab, id]); // Intentionally left out activeSessionId here to not re-trigger session fetch
+
+  useEffect(() => {
+    if (activeTab === "chat" && activeSessionId) {
+      fetch(`/api/chat?sessionId=${activeSessionId}`)
         .then((r) => r.json())
         .then((data) => setMessages(Array.isArray(data) ? data : []))
         .catch(() => {});
+    } else if (activeTab === "chat" && !activeSessionId) {
+      setMessages([]);
     }
-  }, [activeTab, id]);
+  }, [activeTab, activeSessionId]);
+
 
   const toggleFocus = (area: string) => {
     setFocusAreas((prev) =>
@@ -144,8 +166,17 @@ export default function ProfileDetailPage({ params }: { params: Promise<{ id: st
       const res = await fetch("/api/chat", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ profileId: id, message: userMsg }),
+        body: JSON.stringify({ profileId: id, message: userMsg, sessionId: activeSessionId }),
       });
+
+      const newSessionId = res.headers.get("X-Session-ID");
+      if (newSessionId && newSessionId !== activeSessionId) {
+        setActiveSessionId(newSessionId);
+        // Refresh sessions list
+        fetch(`/api/chat/sessions?profileId=${id}`)
+          .then((r) => r.json())
+          .then((data) => setSessions(Array.isArray(data) ? data : []));
+      }
 
       if (!res.ok) {
         const data = await res.json();
@@ -229,9 +260,15 @@ export default function ProfileDetailPage({ params }: { params: Promise<{ id: st
 
   const getRelationIcon = (rel: string) => {
     const icons: Record<string, string> = {
-      self: "🧑", spouse: "💑", child: "👶", parent: "👨‍🦳", sibling: "👫", other: "👤",
+      self: "🧑", spouse: "💑", child: "👶", parent: "👨‍🦳", sibling: "👫",
+      friend: "🤝", colleague: "💼", other: "👤",
     };
     return icons[rel] || "👤";
+  };
+
+  const startNewChat = () => {
+    setActiveSessionId(null);
+    setMessages([]);
   };
 
   return (
@@ -252,8 +289,8 @@ export default function ProfileDetailPage({ params }: { params: Promise<{ id: st
           </div>
         </div>
         <div className="profile-detail-actions">
-          <Link href={`/profiles/${id}/chat`} className="btn btn-secondary">💬 Chat</Link>
-          <Link href={`/profiles/${id}/plan`} className="btn btn-primary">🧬 Generate Plan</Link>
+          <button onClick={() => setActiveTab('chat')} className="btn btn-secondary">💬 Chat</button>
+          <button onClick={() => setActiveTab('plans')} className="btn btn-primary">🧬 Generate Plan</button>
         </div>
       </div>
 
@@ -470,69 +507,90 @@ export default function ProfileDetailPage({ params }: { params: Promise<{ id: st
             </div>
           </div>
 
-          <div className="chat-container">
-            <div className="chat-messages">
-              {messages.length === 0 && !streaming && (
-                <div className="chat-empty">
-                  <div className="icon">💬</div>
-                  <h3>Start a conversation</h3>
-                  <p>Ask anything about {profile.name}&apos;s health — diet, exercise, lifestyle, supplements, and more.</p>
-                </div>
-              )}
-
-              {messages.map((msg) => (
-                <div key={msg.id} className={`chat-message ${msg.role}`}>
-                  <div className="chat-message-avatar">
-                    {msg.role === "assistant" ? "🤖" : "👤"}
+          <div className="chat-wrapper">
+            <div className="chat-sidebar">
+              <div className="chat-sidebar-header">
+                <button className="btn btn-primary btn-full btn-sm" onClick={startNewChat}>
+                  ➕ New Chat
+                </button>
+              </div>
+              <div className="chat-session-list">
+                {sessions.map(s => (
+                  <div
+                    key={s.id}
+                    className={`chat-session-item ${activeSessionId === s.id ? 'active' : ''}`}
+                    onClick={() => setActiveSessionId(s.id)}
+                  >
+                    {s.title}
                   </div>
-                  <div className="chat-bubble">
-                    <div dangerouslySetInnerHTML={{ __html: simpleMarkdown(msg.content) }} />
-                  </div>
-                </div>
-              ))}
-
-              {streaming && streamedContent && (
-                <div className="chat-message assistant">
-                  <div className="chat-message-avatar">🤖</div>
-                  <div className="chat-bubble">
-                    <div dangerouslySetInnerHTML={{ __html: simpleMarkdown(streamedContent) }} />
-                  </div>
-                </div>
-              )}
-
-              {streaming && !streamedContent && (
-                <div className="chat-message assistant">
-                  <div className="chat-message-avatar">🤖</div>
-                  <div className="chat-bubble">
-                    <div className="typing-indicator">
-                      <span /><span /><span />
-                    </div>
-                  </div>
-                </div>
-              )}
+                ))}
+              </div>
             </div>
 
-            <div className="chat-input-area">
-              <textarea
-                className="chat-input"
-                value={chatInput}
-                onChange={(e) => setChatInput(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter" && !e.shiftKey) {
-                    e.preventDefault();
-                    sendMessage();
-                  }
-                }}
-                placeholder={`Ask about ${profile.name}'s health...`}
-                rows={1}
-              />
-              <button
-                className="chat-send-btn"
-                onClick={sendMessage}
-                disabled={streaming || !chatInput.trim()}
-              >
-                ➤
-              </button>
+            <div className="chat-container">
+              <div className="chat-messages">
+                {messages.length === 0 && !streaming && (
+                  <div className="chat-empty">
+                    <div className="icon">💬</div>
+                    <h3>Start a conversation</h3>
+                    <p>Ask anything about {profile.name}&apos;s health — diet, exercise, lifestyle, supplements, and more.</p>
+                  </div>
+                )}
+
+                {messages.map((msg) => (
+                  <div key={msg.id} className={`chat-message ${msg.role}`}>
+                    <div className="chat-message-avatar">
+                      {msg.role === "assistant" ? "🤖" : "👤"}
+                    </div>
+                    <div className="chat-bubble">
+                      <div dangerouslySetInnerHTML={{ __html: simpleMarkdown(msg.content) }} />
+                    </div>
+                  </div>
+                ))}
+
+                {streaming && streamedContent && (
+                  <div className="chat-message assistant">
+                    <div className="chat-message-avatar">🤖</div>
+                    <div className="chat-bubble">
+                      <div dangerouslySetInnerHTML={{ __html: simpleMarkdown(streamedContent) }} />
+                    </div>
+                  </div>
+                )}
+
+                {streaming && !streamedContent && (
+                  <div className="chat-message assistant">
+                    <div className="chat-message-avatar">🤖</div>
+                    <div className="chat-bubble">
+                      <div className="typing-indicator">
+                        <span /><span /><span />
+                      </div>
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              <div className="chat-input-area">
+                <textarea
+                  className="chat-input"
+                  value={chatInput}
+                  onChange={(e) => setChatInput(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" && !e.shiftKey) {
+                      e.preventDefault();
+                      sendMessage();
+                    }
+                  }}
+                  placeholder={`Ask about ${profile.name}'s health...`}
+                  rows={1}
+                />
+                <button
+                  className="chat-send-btn"
+                  onClick={sendMessage}
+                  disabled={streaming || !chatInput.trim()}
+                >
+                  ➤
+                </button>
+              </div>
             </div>
           </div>
         </div>

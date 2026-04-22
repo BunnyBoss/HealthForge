@@ -141,7 +141,7 @@ function ProfileFormModal({
     <div className="modal-overlay" onClick={onClose}>
       <div className="modal" onClick={(e) => e.stopPropagation()}>
         <div className="modal-header">
-          <h2>{profile ? "Edit Profile" : "Add Family Member"}</h2>
+          <h2>{profile ? "Edit Profile" : "Add Profile"}</h2>
           <button className="modal-close" onClick={onClose}>
             ✕
           </button>
@@ -175,6 +175,8 @@ function ProfileFormModal({
                     <option value="child">Child</option>
                     <option value="parent">Parent</option>
                     <option value="sibling">Sibling</option>
+                    <option value="friend">Friend</option>
+                    <option value="colleague">Colleague</option>
                     <option value="other">Other</option>
                   </select>
                 </div>
@@ -408,7 +410,8 @@ function ProfilesPageInner() {
 
   const getRelationIcon = (rel: string) => {
     const icons: Record<string, string> = {
-      self: "🧑", spouse: "💑", child: "👶", parent: "👨‍🦳", sibling: "👫", other: "👤",
+      self: "🧑", spouse: "💑", child: "👶", parent: "👨‍🦳", sibling: "👫",
+      friend: "🤝", colleague: "💼", other: "👤",
     };
     return icons[rel] || "👤";
   };
@@ -417,8 +420,8 @@ function ProfilesPageInner() {
     <div className="page-container animate-fade-in">
       <div className="page-header-actions">
         <div className="page-header">
-          <h1>Health Profiles</h1>
-          <p>Manage health profiles for you and your family</p>
+          <h1>Profiles</h1>
+          <p>Manage health profiles for you, your family, and friends</p>
         </div>
         <button className="btn btn-primary" onClick={() => { setEditProfile(undefined); setShowModal(true); }}>
           ➕ Add Profile
@@ -495,7 +498,7 @@ function ProfilesPageInner() {
 
           <div className="add-profile-card" onClick={() => { setEditProfile(undefined); setShowModal(true); }}>
             <span className="icon">➕</span>
-            <span>Add Family Member</span>
+            <span>Add Profile</span>
           </div>
         </div>
       )}
