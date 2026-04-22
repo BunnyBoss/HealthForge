@@ -1,0 +1,33 @@
+{
+  "name": "healthforge",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "lint": "next lint"
+  },
+  "dependencies": {
+    "next": "^15.3.1",
+    "react": "^19.1.0",
+    "react-dom": "^19.1.0",
+    "better-sqlite3": "^11.9.1",
+    "next-auth": "^5.0.0-beta.25",
+    "bcryptjs": "^2.4.3",
+    "uuid": "^11.1.0",
+    "react-markdown": "^10.1.0",
+    "remark-gfm": "^4.0.1"
+  },
+  "devDependencies": {
+    "@types/node": "^22.14.1",
+    "@types/react": "^19.1.2",
+    "@types/react-dom": "^19.1.2",
+    "@types/better-sqlite3": "^7.6.13",
+    "@types/bcryptjs": "^2.4.6",
+    "@types/uuid": "^10.0.0",
+    "typescript": "^5.8.3",
+    "eslint": "^9.25.1",
+    "eslint-config-next": "^15.3.1"
+  }
+}
