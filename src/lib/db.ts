@@ -83,7 +83,53 @@ function initSchema() {
       preferred_model TEXT,
       updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
     );
+
+    CREATE TABLE IF NOT EXISTS profile_groups (
+      id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      name TEXT NOT NULL,
+      description TEXT DEFAULT '',
+      group_type TEXT DEFAULT 'custom',
+      group_goals TEXT DEFAULT '[]',
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    );
+
+    CREATE TABLE IF NOT EXISTS profile_group_members (
+      group_id TEXT NOT NULL REFERENCES profile_groups(id) ON DELETE CASCADE,
+      profile_id TEXT NOT NULL REFERENCES profiles(id) ON DELETE CASCADE,
+      PRIMARY KEY (group_id, profile_id)
+    );
+
+    CREATE TABLE IF NOT EXISTS notification_schedules (
+      id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      profile_id TEXT,
+      group_id TEXT,
+      phone_number TEXT NOT NULL,
+      schedule_type TEXT NOT NULL DEFAULT 'daily_morning',
+      cron_expression TEXT DEFAULT '0 8 * * *',
+      message_template TEXT NOT NULL DEFAULT 'plan_summary',
+      custom_message TEXT,
+      is_active INTEGER DEFAULT 1,
+      last_sent_at DATETIME,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    );
+
+    CREATE TABLE IF NOT EXISTS whatsapp_config (
+      user_id TEXT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+      is_connected INTEGER DEFAULT 0,
+      phone_number TEXT,
+      updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    );
   `);
+
+  // Add group_id to health_plans if not exists
+  try {
+    db.exec(`ALTER TABLE health_plans ADD COLUMN group_id TEXT REFERENCES profile_groups(id) ON DELETE CASCADE`);
+  } catch {
+    // Column already exists
+  }
 }
 
 export default getDb;

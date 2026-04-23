@@ -210,3 +210,105 @@ export async function generateCompletion(
   const data = await response.json();
   return data.choices?.[0]?.message?.content || "";
 }
+
+// ═══════════════════════════════════════════
+// GROUP / MULTI-PROFILE AI PROMPTS
+// ═══════════════════════════════════════════
+
+export function buildGroupSystemPrompt(profiles: ProfileData[]): string {
+  const memberContexts = profiles
+    .map((p, i) => `### Member ${i + 1}\n${buildProfileContext(p)}`)
+    .join("\n\n");
+
+  return `You are HealthForge AI — a knowledgeable, evidence-based health and lifestyle advisor for GROUPS of people.
+
+## Your Role
+- You provide personalized health, nutrition, exercise, and lifestyle recommendations for a GROUP of individuals simultaneously.
+- All advice MUST be grounded in well-established scientific evidence and current medical guidelines.
+- You MUST consider EVERY member's specific health profile including medical conditions, medications, and allergies.
+- When there are conflicts between members' needs (e.g., one diabetic, one needs high-carb), you MUST:
+  1. ⚠️ Flag the conflict clearly with a warning
+  2. Propose a compromise that works for everyone
+  3. Provide per-member modifications where a shared approach isn't possible
+
+## Group Members
+${memberContexts}
+
+## Critical Rules
+1. **Safety First**: Never recommend anything that could harm ANY member. Check all medications and conditions.
+2. **Age-Appropriate**: Account for the age range of all members (children vs adults vs elderly).
+3. **Allergy Union**: The plan must avoid ALL allergens across ALL members unless specifically modified per-member.
+4. **Medical Disclaimer**: Remind users to consult healthcare providers.
+5. **Per-Member Callouts**: After shared recommendations, add specific modifications for members who need exceptions.
+6. **Use Markdown**: Format with clear headings, member-specific sections, and ⚠️ warnings for conflicts.`;
+}
+
+export function buildGroupPlanPrompt(
+  profiles: ProfileData[],
+  groupType: string,
+  groupGoals: string[],
+  focusAreas: string[]
+): string {
+  const duration = "7-day";
+  const areas = focusAreas.length > 0 ? focusAreas.join(", ") : "diet, exercise, sleep, stress management";
+  const goals = groupGoals.length > 0 ? groupGoals.join(", ") : "overall family wellness";
+  const memberNames = profiles.map((p) => p.name).join(", ");
+
+  const typeLabel: Record<string, string> = {
+    family_meal: "Family Meal Plan",
+    workout: "Group Workout Plan",
+    wellness: "Wellness Challenge",
+    custom: "Custom Group Plan",
+  };
+
+  return `Generate a comprehensive ${duration} **${typeLabel[groupType] || "Group Health Plan"}** for: ${memberNames}.
+
+## Group Goals: ${goals}
+## Focus Areas: ${areas}
+
+## Required Structure
+
+### ⚠️ Conflict Analysis
+First, analyze the group and identify any conflicts between members' health needs (dietary restrictions, medical conditions, activity levels, age differences). Flag each conflict with a ⚠️ warning and explain how you'll handle it.
+
+### 📋 Shared Plan
+Generate a plan that works for ALL members. For each day, provide:
+
+#### 🍽️ Shared Meals
+- Specific meals with portions that respect ALL allergies and dietary needs
+- Base meals that everyone can eat together
+- Mark any per-member modifications clearly
+
+#### 🏋️ Group Activities
+- Exercises the group can do together
+- Intensity levels appropriate for the youngest/oldest/least fit member
+- Optional intensity boosters for fitter members
+
+#### 😴 Shared Schedule
+- Wake/sleep times, meal times, activity times
+- Consider different age groups (kids' bedtimes vs adults)
+
+### 👤 Per-Member Modifications
+For EACH member who needs exceptions from the shared plan, provide a dedicated section with:
+- What they should add/remove/modify from the shared meals
+- Exercise intensity adjustments
+- Supplement recommendations specific to their conditions
+- Any medication timing considerations
+
+### ⚠️ Safety Warnings
+- Medication interactions to watch for
+- Activity restrictions per member
+- When to consult a healthcare provider
+
+Be SPECIFIC — exact foods, exact exercises, exact timings. No vague advice.
+Use markdown formatting with clear headers and organized sections.`;
+}
+
+export function buildDailySummaryPrompt(planContent: string, dayOfWeek: string): string {
+  return `Based on this health plan, generate a brief, friendly WhatsApp-style daily summary for ${dayOfWeek}. Keep it under 500 characters. Use emojis. Include the key meals, exercises, and reminders for today only.
+
+Plan:
+${planContent.substring(0, 3000)}
+
+Format as a short, motivational message with bullet points. Start with a greeting.`;
+}

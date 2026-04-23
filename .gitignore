@@ -35,3 +35,10 @@ next-env.d.ts
 
 # database
 *.db
+
+# whatsapp
+wa_auth/
+wa_auth/*
+
+# application logs
+*.log
