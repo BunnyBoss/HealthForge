@@ -26,9 +26,9 @@ export async function GET(req: NextRequest) {
 
   const sessions = db
     .prepare(
-      "SELECT * FROM chat_sessions WHERE profile_id = ? ORDER BY updated_at DESC"
+      "SELECT * FROM chat_sessions WHERE profile_id = ? AND user_id = ? ORDER BY updated_at DESC"
     )
-    .all(profileId);
+    .all(profileId, session.user.id);
 
   return NextResponse.json(sessions);
 }

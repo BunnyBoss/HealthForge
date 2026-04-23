@@ -17,7 +17,7 @@ export async function POST(req: NextRequest) {
   }
 
   try {
-    const { profileId, message, sessionId: providedSessionId } = await req.json();
+    const { profileId, message, sessionId: providedSessionId, planId } = await req.json();
 
     if (!profileId || !message) {
       return NextResponse.json(
@@ -52,19 +52,44 @@ export async function POST(req: NextRequest) {
       additional_notes: profile.additional_notes as string | undefined,
     };
 
+    let selectedPlanContent: string | null = null;
+    let selectedPlanMeta: { id: string; title: string } | null = null;
+    if (planId) {
+      const selectedPlan = db
+        .prepare(`
+          SELECT id, title, content
+          FROM health_plans
+          WHERE id = ? AND profile_id = ?
+        `)
+        .get(planId, profileId) as { id: string; title: string; content: string } | undefined;
+
+      if (!selectedPlan) {
+        return NextResponse.json({ error: "Selected plan not found for this profile" }, { status: 404 });
+      }
+      selectedPlanMeta = { id: selectedPlan.id, title: selectedPlan.title };
+      selectedPlanContent = selectedPlan.content;
+    }
+
     // Determine session ID
     let sessionId = providedSessionId;
     if (!sessionId) {
       sessionId = uuidv4();
       const title = message.length > 30 ? message.substring(0, 30) + '...' : message;
       db.prepare(
-        "INSERT INTO chat_sessions (id, profile_id, title) VALUES (?, ?, ?)"
-      ).run(sessionId, profileId, title);
+        "INSERT INTO chat_sessions (id, user_id, profile_id, plan_id, title) VALUES (?, ?, ?, ?, ?)"
+      ).run(sessionId, session.user.id, profileId, selectedPlanMeta?.id || null, title);
     } else {
-      // Update session timestamp
+      const existingSession = db
+        .prepare("SELECT id FROM chat_sessions WHERE id = ? AND user_id = ? AND profile_id = ?")
+        .get(sessionId, session.user.id, profileId);
+      if (!existingSession) {
+        return NextResponse.json({ error: "Chat session not found" }, { status: 404 });
+      }
+
+      // Update session timestamp and optionally selected plan link
       db.prepare(
-        "UPDATE chat_sessions SET updated_at = CURRENT_TIMESTAMP WHERE id = ?"
-      ).run(sessionId);
+        "UPDATE chat_sessions SET updated_at = CURRENT_TIMESTAMP, plan_id = COALESCE(?, plan_id) WHERE id = ?"
+      ).run(selectedPlanMeta?.id || null, sessionId);
     }
 
     // Get chat history for this session (last 20 messages for context)
@@ -83,8 +108,12 @@ export async function POST(req: NextRequest) {
 
     // Build messages array
     const config = getAiConfig(session.user.id);
+    const systemPrompt = buildSystemPrompt(profileData) + (selectedPlanContent
+      ? `\n\n## Selected Plan Context\nPlan ID: ${selectedPlanMeta?.id}\nPlan Title: ${selectedPlanMeta?.title}\n\nUse this plan as primary context for recommendations when relevant.\n\n${selectedPlanContent}`
+      : "");
+
     const messages = [
-      { role: "system", content: buildSystemPrompt(profileData) },
+      { role: "system", content: systemPrompt },
       ...history,
       { role: "user", content: message },
     ];

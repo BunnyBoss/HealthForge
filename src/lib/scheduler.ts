@@ -12,7 +12,12 @@ async function processQueue() {
   try {
     const db = getDb();
     const pendingMessages = db
-      .prepare("SELECT * FROM queued_messages WHERE status = 'pending' AND scheduled_for <= CURRENT_TIMESTAMP")
+      .prepare(`
+        SELECT * FROM queued_messages
+        WHERE status = 'pending'
+          AND datetime(scheduled_for) <= datetime('now')
+        ORDER BY datetime(scheduled_for) ASC
+      `)
       .all() as any[];
 
     if (pendingMessages.length === 0) {
@@ -29,8 +34,21 @@ async function processQueue() {
 
     for (const msg of pendingMessages) {
       try {
+        const lock = db.prepare(`
+          UPDATE queued_messages
+          SET status = 'submitting',
+              attempt_count = COALESCE(attempt_count, 0) + 1,
+              last_attempt_at = CURRENT_TIMESTAMP,
+              last_error = NULL
+          WHERE id = ? AND status = 'pending'
+        `).run(msg.id);
+
+        if (lock.changes === 0) {
+          continue;
+        }
+
         // Send to target phone
-        await sendWhatsAppMessage(msg.target_phone, msg.message_text);
+        const targetResult = await sendWhatsAppMessage(msg.target_phone, msg.message_text);
 
         // CC if exists
         if (msg.cc_phone) {
@@ -39,15 +57,28 @@ async function processQueue() {
           await sendWhatsAppMessage(msg.cc_phone, `${ccPrefix}\n\n${msg.message_text}`);
         }
 
-        // Mark as sent
-        db.prepare("UPDATE queued_messages SET status = 'sent' WHERE id = ?").run(msg.id);
-        console.log(`[Scheduler] Sent message ${msg.id} to ${msg.target_phone}`);
+        // Mark as submitted to WhatsApp transport
+        db.prepare(`
+          UPDATE queued_messages
+          SET status = 'submitted',
+              wa_message_id = ?,
+              submitted_at = COALESCE(submitted_at, CURRENT_TIMESTAMP),
+              last_error = NULL
+          WHERE id = ?
+        `).run(targetResult.messageId, msg.id);
+        console.log(`[Scheduler] Submitted message ${msg.id} to ${msg.target_phone}`);
 
         // Random delay to avoid spam filters
         await new Promise(resolve => setTimeout(resolve, 2000 + Math.random() * 3000));
       } catch (err) {
         console.error(`[Scheduler] Failed to send message ${msg.id}:`, err);
-        db.prepare("UPDATE queued_messages SET status = 'failed' WHERE id = ?").run(msg.id);
+        const errorText = err instanceof Error ? err.message : String(err);
+        db.prepare(`
+          UPDATE queued_messages
+          SET status = 'failed',
+              last_error = ?
+          WHERE id = ?
+        `).run(errorText, msg.id);
       }
     }
   } catch (error) {

@@ -58,7 +58,9 @@ function initSchema() {
 
     CREATE TABLE IF NOT EXISTS chat_sessions (
       id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
       profile_id TEXT NOT NULL REFERENCES profiles(id) ON DELETE CASCADE,
+      plan_id TEXT REFERENCES health_plans(id) ON DELETE SET NULL,
       title TEXT NOT NULL,
       created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
       updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
@@ -81,6 +83,7 @@ function initSchema() {
       api_url TEXT,
       api_key TEXT,
       preferred_model TEXT,
+      default_country_iso TEXT DEFAULT 'IN',
       updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
     );
 
@@ -128,11 +131,19 @@ function initSchema() {
       user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
       profile_id TEXT REFERENCES profiles(id) ON DELETE CASCADE,
       group_id TEXT REFERENCES profile_groups(id) ON DELETE CASCADE,
+      plan_id TEXT REFERENCES health_plans(id) ON DELETE SET NULL,
       target_phone TEXT NOT NULL,
       cc_phone TEXT,
       message_text TEXT NOT NULL,
       scheduled_for DATETIME NOT NULL,
       status TEXT DEFAULT 'pending',
+      wa_message_id TEXT,
+      submitted_at DATETIME,
+      delivered_at DATETIME,
+      read_at DATETIME,
+      last_error TEXT,
+      attempt_count INTEGER DEFAULT 0,
+      last_attempt_at DATETIME,
       created_at DATETIME DEFAULT CURRENT_TIMESTAMP
     );
   `);
@@ -150,6 +161,50 @@ function initSchema() {
   } catch {
     // Column already exists
   }
+
+  // Add default_country_iso to user_settings if not exists
+  try {
+    db.exec(`ALTER TABLE user_settings ADD COLUMN default_country_iso TEXT DEFAULT 'IN'`);
+  } catch {
+    // Column already exists
+  }
+
+  // Add user_id and plan_id to chat_sessions if not exists
+  try { db.exec(`ALTER TABLE chat_sessions ADD COLUMN user_id TEXT REFERENCES users(id) ON DELETE CASCADE`); } catch {}
+  try { db.exec(`ALTER TABLE chat_sessions ADD COLUMN plan_id TEXT REFERENCES health_plans(id) ON DELETE SET NULL`); } catch {}
+
+  // Backfill legacy chat_sessions.user_id from owning profile
+  db.exec(`
+    UPDATE chat_sessions
+    SET user_id = (
+      SELECT p.user_id
+      FROM profiles p
+      WHERE p.id = chat_sessions.profile_id
+      LIMIT 1
+    )
+    WHERE user_id IS NULL
+  `);
+
+  // Add plan_id to queued_messages if not exists
+  try {
+    db.exec(`ALTER TABLE queued_messages ADD COLUMN plan_id TEXT REFERENCES health_plans(id) ON DELETE SET NULL`);
+  } catch {
+    // Column already exists
+  }
+
+  // Add delivery-tracking fields to queued_messages if not exists
+  try { db.exec(`ALTER TABLE queued_messages ADD COLUMN wa_message_id TEXT`); } catch {}
+  try { db.exec(`ALTER TABLE queued_messages ADD COLUMN submitted_at DATETIME`); } catch {}
+  try { db.exec(`ALTER TABLE queued_messages ADD COLUMN delivered_at DATETIME`); } catch {}
+  try { db.exec(`ALTER TABLE queued_messages ADD COLUMN read_at DATETIME`); } catch {}
+  try { db.exec(`ALTER TABLE queued_messages ADD COLUMN last_error TEXT`); } catch {}
+  try { db.exec(`ALTER TABLE queued_messages ADD COLUMN attempt_count INTEGER DEFAULT 0`); } catch {}
+  try { db.exec(`ALTER TABLE queued_messages ADD COLUMN last_attempt_at DATETIME`); } catch {}
+
+  // Normalize legacy status naming.
+  db.exec(`UPDATE queued_messages SET status = 'submitted' WHERE status = 'sent'`);
+
+  db.exec(`CREATE INDEX IF NOT EXISTS idx_queued_messages_wa_message_id ON queued_messages(wa_message_id)`);
 }
 
 export default getDb;

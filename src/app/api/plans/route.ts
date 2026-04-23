@@ -53,6 +53,9 @@ export async function POST(req: NextRequest) {
     const areas = focusAreas || [];
 
     if (action === "save") {
+      if (!providedContent || !String(providedContent).trim()) {
+        return NextResponse.json({ error: "content is required to save a plan" }, { status: 400 });
+      }
       const planId = uuidv4();
       const title = providedTitle || `${type.charAt(0).toUpperCase() + type.slice(1)} Health Plan for ${profileData.name}`;
       
@@ -151,4 +154,28 @@ export async function GET(req: NextRequest) {
   }));
 
   return NextResponse.json(parsed);
+}
+
+// DELETE plans for a profile (single/bulk)
+export async function DELETE(req: NextRequest) {
+  const session = await auth();
+  if (!session?.user?.id) {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
+
+  const body = await req.json().catch(() => ({}));
+  const ids = Array.isArray(body?.ids) ? body.ids.filter((id: unknown) => typeof id === "string") : [];
+  if (ids.length === 0) {
+    return NextResponse.json({ error: "ids array is required" }, { status: 400 });
+  }
+
+  const db = getDb();
+  const placeholders = ids.map(() => "?").join(",");
+  const result = db.prepare(`
+    DELETE FROM health_plans
+    WHERE id IN (${placeholders})
+      AND profile_id IN (SELECT id FROM profiles WHERE user_id = ?)
+  `).run(...ids, session.user.id);
+
+  return NextResponse.json({ deleted: result.changes });
 }

@@ -7,12 +7,58 @@ import makeWASocket, {
 import path from "path";
 import { Boom } from "@hapi/boom";
 import fs from "fs";
+import getDb from "@/lib/db";
 
 const AUTH_DIR = path.resolve(process.cwd(), "wa_auth");
 
 let sock: WASocket | null = null;
 let connectionStatus: "disconnected" | "connecting" | "connected" = "disconnected";
 let isInitializing = false;
+
+const STATUS_RANK: Record<string, number> = {
+  pending: 1,
+  submitting: 2,
+  submitted: 3,
+  delivered: 4,
+  read: 5,
+  failed: 0,
+};
+
+function promoteStatusForMessage(waMessageId: string, nextStatus: "delivered" | "read") {
+  if (!waMessageId) return;
+  try {
+    const db = getDb();
+    const row = db
+      .prepare("SELECT id, status FROM queued_messages WHERE wa_message_id = ?")
+      .get(waMessageId) as { id: string; status: string } | undefined;
+
+    if (!row) return;
+
+    const currentRank = STATUS_RANK[row.status] ?? -1;
+    const nextRank = STATUS_RANK[nextStatus] ?? -1;
+    if (nextRank <= currentRank) return;
+
+    if (nextStatus === "delivered") {
+      db.prepare(`
+        UPDATE queued_messages
+        SET status = 'delivered',
+            delivered_at = COALESCE(delivered_at, CURRENT_TIMESTAMP)
+        WHERE id = ?
+      `).run(row.id);
+      return;
+    }
+
+    db.prepare(`
+      UPDATE queued_messages
+      SET status = 'read',
+          delivered_at = COALESCE(delivered_at, CURRENT_TIMESTAMP),
+          read_at = COALESCE(read_at, CURRENT_TIMESTAMP)
+      WHERE id = ?
+    `).run(row.id);
+  } catch (error) {
+    console.error("[WhatsApp] Failed to process receipt update:", error);
+  }
+}
 
 export async function initializeWhatsApp() {
   if (isInitializing || sock) return;
@@ -63,6 +109,23 @@ export async function initializeWhatsApp() {
         connectionStatus = "connected";
       }
     });
+
+    sock.ev.on("message-receipt.update", (updates) => {
+      for (const update of updates) {
+        const waMessageId = update.key?.id;
+        if (!waMessageId) continue;
+        const receipt = update.receipt;
+
+        if (receipt?.readTimestamp || receipt?.playedTimestamp) {
+          promoteStatusForMessage(waMessageId, "read");
+          continue;
+        }
+
+        if (receipt?.receiptTimestamp || (receipt?.deliveredDeviceJid && receipt.deliveredDeviceJid.length > 0)) {
+          promoteStatusForMessage(waMessageId, "delivered");
+        }
+      }
+    });
   } catch (error) {
     console.error("[WhatsApp] Connection error:", error);
     connectionStatus = "disconnected";
@@ -75,7 +138,7 @@ export async function initializeWhatsApp() {
 export async function sendWhatsAppMessage(
   phone: string,
   message: string
-): Promise<boolean> {
+): Promise<{ messageId: string }> {
   if (!sock || connectionStatus !== "connected") {
     throw new Error("WhatsApp is not connected");
   }
@@ -84,9 +147,12 @@ export async function sendWhatsAppMessage(
     // Normalize phone number: remove +, spaces, dashes
     const cleanPhone = phone.replace(/[^0-9]/g, "");
     const jid = `${cleanPhone}@s.whatsapp.net`;
-
-    await sock.sendMessage(jid, { text: message });
-    return true;
+    const sent = await sock.sendMessage(jid, { text: message });
+    const messageId = sent?.key?.id;
+    if (!messageId) {
+      throw new Error("WhatsApp send succeeded but message id was missing");
+    }
+    return { messageId };
   } catch (error) {
     console.error("WhatsApp send error:", error);
     throw error;

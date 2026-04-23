@@ -67,7 +67,7 @@ export default function GroupDetailPage({ params }: { params: Promise<{ id: stri
   }, [id]);
 
   useEffect(() => {
-    if (activeTab === "plans") {
+    if (activeTab === "plan") {
       fetch(`/api/groups/${id}/plan`)
         .then((r) => r.json())
         .then((data) => setPlans(Array.isArray(data) ? data : []))
@@ -182,7 +182,7 @@ export default function GroupDetailPage({ params }: { params: Promise<{ id: stri
           </div>
         </div>
         <div className="profile-detail-actions">
-          <button onClick={() => setActiveTab("plans")} className="btn btn-primary">🧬 Generate Group Plan</button>
+          <button onClick={() => setActiveTab("plan")} className="btn btn-primary">🧬 Generate Group Plan</button>
         </div>
       </div>
 
@@ -296,8 +296,6 @@ export default function GroupDetailPage({ params }: { params: Promise<{ id: stri
               <button className="btn btn-primary btn-full" onClick={generatePlan} disabled={generatingPlan}>
                 {generatingPlan ? (<><span className="loading-spinner" /> Generating...</>) : "🧬 Generate Group Plan"}
               </button>
-
-              {planError && <div className="form-error" style={{ marginTop: "0.75rem" }}>{planError}</div>}
 
               {planError && (
                 <div className="form-error" style={{ marginTop: "0.75rem" }}>{planError}</div>

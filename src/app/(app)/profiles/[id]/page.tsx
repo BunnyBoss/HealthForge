@@ -65,8 +65,9 @@ export default function ProfileDetailPage({ params }: { params: Promise<{ id: st
   const [planError, setPlanError] = useState("");
 
   // Chat Sessions state
-  const [sessions, setSessions] = useState<{id: string, title: string, updated_at: string}[]>([]);
+  const [sessions, setSessions] = useState<{id: string, title: string, updated_at: string, plan_id?: string | null}[]>([]);
   const [activeSessionId, setActiveSessionId] = useState<string | null>(null);
+  const [selectedChatPlanId, setSelectedChatPlanId] = useState<string>("");
 
   // Chat state
   const [messages, setMessages] = useState<ChatMessage[]>([]);
@@ -89,12 +90,18 @@ export default function ProfileDetailPage({ params }: { params: Promise<{ id: st
   }, [id]);
 
   useEffect(() => {
-    if (activeTab === "plans") {
+    if (activeTab === "plan") {
       fetch(`/api/plans?profileId=${id}`)
         .then((r) => r.json())
         .then((data) => setPlans(Array.isArray(data) ? data : []))
         .catch(() => {});
     } else if (activeTab === "chat") {
+      if (plans.length === 0) {
+        fetch(`/api/plans?profileId=${id}`)
+          .then((r) => r.json())
+          .then((data) => setPlans(Array.isArray(data) ? data : []))
+          .catch(() => {});
+      }
       fetch(`/api/chat/sessions?profileId=${id}`)
         .then((r) => r.json())
         .then((data) => {
@@ -102,11 +109,12 @@ export default function ProfileDetailPage({ params }: { params: Promise<{ id: st
           setSessions(sessionsList);
           if (sessionsList.length > 0 && !activeSessionId) {
             setActiveSessionId(sessionsList[0].id);
+            setSelectedChatPlanId(sessionsList[0].plan_id || "");
           }
         })
         .catch(() => {});
     }
-  }, [activeTab, id]); // Intentionally left out activeSessionId here to not re-trigger session fetch
+  }, [activeTab, id, plans.length]); // Intentionally left out activeSessionId here to not re-trigger session fetch
 
   useEffect(() => {
     if (activeTab === "chat" && activeSessionId) {
@@ -118,6 +126,14 @@ export default function ProfileDetailPage({ params }: { params: Promise<{ id: st
       setMessages([]);
     }
   }, [activeTab, activeSessionId]);
+
+  useEffect(() => {
+    if (!activeSessionId) return;
+    const session = sessions.find((s) => s.id === activeSessionId);
+    if (session?.plan_id) {
+      setSelectedChatPlanId(session.plan_id);
+    }
+  }, [activeSessionId, sessions]);
 
 
   const toggleFocus = (area: string) => {
@@ -201,7 +217,7 @@ export default function ProfileDetailPage({ params }: { params: Promise<{ id: st
       const res = await fetch("/api/chat", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ profileId: id, message: userMsg, sessionId: activeSessionId }),
+        body: JSON.stringify({ profileId: id, message: userMsg, sessionId: activeSessionId, planId: selectedChatPlanId || null }),
       });
 
       const newSessionId = res.headers.get("X-Session-ID");
@@ -306,6 +322,13 @@ export default function ProfileDetailPage({ params }: { params: Promise<{ id: st
     setMessages([]);
   };
 
+  const openChatWithPlan = (plan: { id: string; title: string }) => {
+    setSelectedChatPlanId(plan.id);
+    setActiveSessionId(null);
+    setMessages([]);
+    setActiveTab("chat");
+  };
+
   return (
     <div className="page-container animate-fade-in">
       <Link href="/profiles" className="back-link">← Back to Profiles</Link>
@@ -325,7 +348,7 @@ export default function ProfileDetailPage({ params }: { params: Promise<{ id: st
         </div>
         <div className="profile-detail-actions">
           <button onClick={() => setActiveTab('chat')} className="btn btn-secondary">💬 Chat</button>
-          <button onClick={() => setActiveTab('plans')} className="btn btn-primary">🧬 Generate Plan</button>
+          <button onClick={() => setActiveTab("plan")} className="btn btn-primary">🧬 Generate Plan</button>
         </div>
       </div>
 
@@ -535,6 +558,7 @@ export default function ProfileDetailPage({ params }: { params: Promise<{ id: st
           <CommunicationsTab
             profileId={id}
             entityName={profile.name}
+            onOpenChatWithPlan={openChatWithPlan}
           />
         </div>
       )}
@@ -546,6 +570,20 @@ export default function ProfileDetailPage({ params }: { params: Promise<{ id: st
             <div>
               You&apos;re chatting about <strong>{profile.name}</strong>&apos;s health profile.
               The AI has full context of their health data. Always verify with a healthcare professional.
+            </div>
+          </div>
+
+          <div className="health-info-card" style={{ marginBottom: "1rem", padding: "0.85rem" }}>
+            <div className="form-group" style={{ marginBottom: 0 }}>
+              <label className="form-label">Chat Plan Context (Optional)</label>
+              <select className="form-select" value={selectedChatPlanId} onChange={(e) => setSelectedChatPlanId(e.target.value)}>
+                <option value="">Profile health data only</option>
+                {plans.map((plan) => (
+                  <option key={plan.id} value={plan.id}>
+                    {plan.title} ({plan.id.slice(0, 8)}…)
+                  </option>
+                ))}
+              </select>
             </div>
           </div>
 
@@ -561,7 +599,10 @@ export default function ProfileDetailPage({ params }: { params: Promise<{ id: st
                   <div
                     key={s.id}
                     className={`chat-session-item ${activeSessionId === s.id ? 'active' : ''}`}
-                    onClick={() => setActiveSessionId(s.id)}
+                    onClick={() => {
+                      setActiveSessionId(s.id);
+                      if (s.plan_id) setSelectedChatPlanId(s.plan_id);
+                    }}
                   >
                     {s.title}
                   </div>

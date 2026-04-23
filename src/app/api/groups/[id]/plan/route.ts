@@ -22,7 +22,7 @@ export async function POST(
   const { id } = await params;
 
   try {
-    const { focusAreas, action, content: providedContent, title: providedTitle } = await req.json();
+    const { focusAreas, action, content: providedContent, title: providedTitle, planType } = await req.json();
     const db = getDb();
 
     // Get group
@@ -65,22 +65,26 @@ export async function POST(
     const config = getAiConfig(session.user.id);
     const groupGoals = JSON.parse((group.group_goals as string) || "[]");
     const groupType = (group.group_type as string) || "custom";
+    const selectedPlanType = typeof planType === "string" && planType.trim() ? planType.trim() : "weekly";
     const areas = focusAreas || [];
 
     if (action === "save") {
+      if (!providedContent || !String(providedContent).trim()) {
+        return NextResponse.json({ error: "content is required to save a plan" }, { status: 400 });
+      }
       const planId = uuidv4();
       const title = providedTitle || `Group Plan: ${group.name as string} (${profilesData.map((p) => p.name).join(", ")})`;
 
       db.prepare(`
         INSERT INTO health_plans (id, profile_id, group_id, plan_type, title, content, focus_areas, model_used)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-      `).run(planId, members[0].id as string, id, "weekly", title, providedContent, JSON.stringify(areas), config.model);
+      `).run(planId, members[0].id as string, id, selectedPlanType, title, providedContent, JSON.stringify(areas), config.model);
 
       return NextResponse.json({
         id: planId,
         title,
         content: providedContent,
-        plan_type: "weekly",
+        plan_type: selectedPlanType,
         focus_areas: areas,
         model_used: config.model,
         created_at: new Date().toISOString(),
@@ -101,7 +105,7 @@ export async function POST(
         id: "temp_" + Date.now(),
         title,
         content,
-        plan_type: "weekly",
+        plan_type: selectedPlanType,
         focus_areas: areas,
         model_used: config.model,
         created_at: new Date().toISOString(),
@@ -114,13 +118,13 @@ export async function POST(
     db.prepare(`
       INSERT INTO health_plans (id, profile_id, group_id, plan_type, title, content, focus_areas, model_used)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-    `).run(planId, members[0].id as string, id, "weekly", title, content, JSON.stringify(areas), config.model);
+    `).run(planId, members[0].id as string, id, selectedPlanType, title, content, JSON.stringify(areas), config.model);
 
     return NextResponse.json({
       id: planId,
       title,
       content,
-      plan_type: "weekly",
+      plan_type: selectedPlanType,
       focus_areas: areas,
       model_used: config.model,
       created_at: new Date().toISOString(),
@@ -145,6 +149,14 @@ export async function GET(
   const { id } = await params;
   const db = getDb();
 
+  const group = db
+    .prepare("SELECT id FROM profile_groups WHERE id = ? AND user_id = ?")
+    .get(id, session.user.id);
+
+  if (!group) {
+    return NextResponse.json({ error: "Group not found" }, { status: 404 });
+  }
+
   const plans = db
     .prepare("SELECT * FROM health_plans WHERE group_id = ? ORDER BY created_at DESC")
     .all(id) as Record<string, unknown>[];
@@ -155,4 +167,39 @@ export async function GET(
   }));
 
   return NextResponse.json(parsed);
+}
+
+export async function DELETE(
+  req: NextRequest,
+  { params }: { params: Promise<{ id: string }> }
+) {
+  const session = await auth();
+  if (!session?.user?.id) {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
+
+  const { id } = await params;
+  const body = await req.json().catch(() => ({}));
+  const ids = Array.isArray(body?.ids) ? body.ids.filter((planId: unknown) => typeof planId === "string") : [];
+  if (ids.length === 0) {
+    return NextResponse.json({ error: "ids array is required" }, { status: 400 });
+  }
+
+  const db = getDb();
+  const group = db
+    .prepare("SELECT id FROM profile_groups WHERE id = ? AND user_id = ?")
+    .get(id, session.user.id);
+
+  if (!group) {
+    return NextResponse.json({ error: "Group not found" }, { status: 404 });
+  }
+
+  const placeholders = ids.map(() => "?").join(",");
+  const result = db.prepare(`
+    DELETE FROM health_plans
+    WHERE group_id = ?
+      AND id IN (${placeholders})
+  `).run(id, ...ids);
+
+  return NextResponse.json({ deleted: result.changes });
 }

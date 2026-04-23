@@ -1,12 +1,15 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { COUNTRY_OPTIONS, normalizeCountryIso, type CountryIso } from "@/lib/phone";
 
 export default function SettingsPage() {
   const [apiUrl, setApiUrl] = useState("");
   const [apiKey, setApiKey] = useState("");
   const [model, setModel] = useState("");
   const [adminPhone, setAdminPhone] = useState("");
+  const [defaultCountryIso, setDefaultCountryIso] = useState<CountryIso>("IN");
+  const [adminCountryIso, setAdminCountryIso] = useState<CountryIso>("IN");
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState("");
@@ -20,6 +23,9 @@ export default function SettingsPage() {
         setApiKey(settings.api_key || "");
         setModel(settings.preferred_model || "qwen3.5:9b");
         setAdminPhone(settings.admin_phone || "");
+        const defaultCountry = normalizeCountryIso(settings.default_country_iso);
+        setDefaultCountryIso(defaultCountry);
+        setAdminCountryIso(defaultCountry);
         setLoading(false);
       }).catch(() => setLoading(false));
   }, []);
@@ -36,7 +42,9 @@ export default function SettingsPage() {
           api_url: apiUrl, 
           api_key: apiKey, 
           preferred_model: model,
-          admin_phone: adminPhone
+          admin_phone: adminPhone,
+          default_country_iso: defaultCountryIso,
+          admin_country_iso: adminCountryIso,
         }),
       });
       setMessage(res.ok ? "Settings saved successfully!" : "Failed to save settings");
@@ -112,15 +120,31 @@ export default function SettingsPage() {
 
         <div className="settings-section">
           <h2>📱 Admin Settings (WhatsApp)</h2>
-          <p>Register your main number. You can choose to be CC'd on messages sent to profiles or groups.</p>
+          <p>Register your main number and set default country handling for all phone inputs.</p>
           <div className="settings-form">
+            <div className="form-group">
+              <label className="form-label">Default Country</label>
+              <select className="form-select" value={defaultCountryIso} onChange={(e) => setDefaultCountryIso(normalizeCountryIso(e.target.value))}>
+                {COUNTRY_OPTIONS.map((country) => (
+                  <option key={country.iso} value={country.iso}>{country.label}</option>
+                ))}
+              </select>
+            </div>
+            <div className="form-group">
+              <label className="form-label">Admin Phone Country</label>
+              <select className="form-select" value={adminCountryIso} onChange={(e) => setAdminCountryIso(normalizeCountryIso(e.target.value))}>
+                {COUNTRY_OPTIONS.map((country) => (
+                  <option key={country.iso} value={country.iso}>{country.label}</option>
+                ))}
+              </select>
+            </div>
             <div className="form-group">
               <label className="form-label">Admin Phone Number</label>
               <input 
                 className="form-input" 
                 value={adminPhone} 
                 onChange={(e) => setAdminPhone(e.target.value)} 
-                placeholder="e.g. 919876543210 (include country code)" 
+                placeholder="e.g. 9876543210 or +919876543210"
               />
             </div>
             <div>

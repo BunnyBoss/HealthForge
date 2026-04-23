@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import getDb from "@/lib/db";
+import { normalizeCountryIso, normalizePhoneNumber } from "@/lib/phone";
 
 // GET settings
 export async function GET() {
@@ -15,12 +16,18 @@ export async function GET() {
     .get(session.user.id) as Record<string, unknown> | undefined;
 
   return NextResponse.json(
-    settings || {
-      api_url: process.env.LITELLM_API_URL || "http://localhost:4000",
-      api_key: "",
-      preferred_model: process.env.DEFAULT_MODEL || "gpt-4o",
-      admin_phone: "",
-    }
+    settings
+      ? {
+        ...settings,
+        default_country_iso: normalizeCountryIso(settings.default_country_iso as string | undefined),
+      }
+      : {
+        api_url: process.env.LITELLM_API_URL || "http://localhost:4000",
+        api_key: "",
+        preferred_model: process.env.DEFAULT_MODEL || "gpt-4o",
+        admin_phone: "",
+        default_country_iso: "IN",
+      }
   );
 }
 
@@ -32,19 +39,37 @@ export async function PUT(req: NextRequest) {
   }
 
   try {
-    const { api_url, api_key, preferred_model, admin_phone } = await req.json();
+    const { api_url, api_key, preferred_model, admin_phone, default_country_iso, admin_country_iso } = await req.json();
     const db = getDb();
+    const normalizedDefaultCountry = normalizeCountryIso(default_country_iso);
+
+    let normalizedAdminPhone: string | null = null;
+    if (typeof admin_phone === "string" && admin_phone.trim()) {
+      const normalized = normalizePhoneNumber(admin_phone, admin_country_iso || normalizedDefaultCountry);
+      if (!normalized.ok) {
+        return NextResponse.json({ error: `Invalid admin phone: ${normalized.error}` }, { status: 400 });
+      }
+      normalizedAdminPhone = normalized.digits;
+    }
 
     db.prepare(`
-      INSERT INTO user_settings (user_id, api_url, api_key, preferred_model, admin_phone, updated_at)
-      VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+      INSERT INTO user_settings (user_id, api_url, api_key, preferred_model, admin_phone, default_country_iso, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
       ON CONFLICT(user_id) DO UPDATE SET
         api_url = excluded.api_url,
         api_key = excluded.api_key,
         preferred_model = excluded.preferred_model,
         admin_phone = excluded.admin_phone,
+        default_country_iso = excluded.default_country_iso,
         updated_at = CURRENT_TIMESTAMP
-    `).run(session.user.id, api_url || null, api_key || null, preferred_model || null, admin_phone || null);
+    `).run(
+      session.user.id,
+      api_url || null,
+      api_key || null,
+      preferred_model || null,
+      normalizedAdminPhone,
+      normalizedDefaultCountry
+    );
 
     return NextResponse.json({ message: "Settings saved" });
   } catch (error) {
