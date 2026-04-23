@@ -18,7 +18,7 @@ export async function POST(req: NextRequest) {
   }
 
   try {
-    const { profileId, planType, focusAreas } = await req.json();
+    const { profileId, planType, focusAreas, action, content: providedContent, title: providedTitle } = await req.json();
 
     if (!profileId) {
       return NextResponse.json({ error: "profileId is required" }, { status: 400 });
@@ -52,17 +52,50 @@ export async function POST(req: NextRequest) {
     const type = planType || "weekly";
     const areas = focusAreas || [];
 
+    if (action === "save") {
+      const planId = uuidv4();
+      const title = providedTitle || `${type.charAt(0).toUpperCase() + type.slice(1)} Health Plan for ${profileData.name}`;
+      
+      db.prepare(`
+        INSERT INTO health_plans (id, profile_id, plan_type, title, content, focus_areas, model_used)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+      `).run(planId, profileId, type, title, providedContent, JSON.stringify(areas), config.model);
+
+      return NextResponse.json({
+        id: planId,
+        title,
+        content: providedContent,
+        plan_type: type,
+        focus_areas: areas,
+        model_used: config.model,
+        created_at: new Date().toISOString(),
+      });
+    }
+
+    // Default or generate action
     const messages = [
       { role: "system", content: buildSystemPrompt(profileData) },
       { role: "user", content: buildPlanPrompt(profileData, type, areas) },
     ];
 
     const content = await generateCompletion(config, messages);
-
-    // Save plan
-    const planId = uuidv4();
     const title = `${type.charAt(0).toUpperCase() + type.slice(1)} Health Plan for ${profileData.name}`;
 
+    if (action === "generate") {
+      return NextResponse.json({
+        id: "temp_" + Date.now(),
+        title,
+        content,
+        plan_type: type,
+        focus_areas: areas,
+        model_used: config.model,
+        created_at: new Date().toISOString(),
+        isTemp: true,
+      });
+    }
+
+    // Legacy behavior: save and generate
+    const planId = uuidv4();
     db.prepare(`
       INSERT INTO health_plans (id, profile_id, plan_type, title, content, focus_areas, model_used)
       VALUES (?, ?, ?, ?, ?, ?, ?)

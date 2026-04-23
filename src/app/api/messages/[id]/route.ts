@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import getDb from "@/lib/db";
 
-// PUT update schedule (toggle, edit)
+// PUT: Edit message text or scheduled_for
 export async function PUT(
   req: NextRequest,
   { params }: { params: Promise<{ id: string }> }
@@ -11,27 +11,22 @@ export async function PUT(
   if (!session?.user?.id) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
   const { id } = await params;
-  const body = await req.json();
+  const { message_text, scheduled_for, target_phone } = await req.json();
   const db = getDb();
 
   db.prepare(`
-    UPDATE notification_schedules
-    SET is_active = COALESCE(?, is_active),
-        phone_number = COALESCE(?, phone_number),
-        schedule_type = COALESCE(?, schedule_type)
+    UPDATE queued_messages
+    SET message_text = COALESCE(?, message_text),
+        scheduled_for = COALESCE(?, scheduled_for),
+        target_phone = COALESCE(?, target_phone),
+        status = CASE WHEN status = 'failed' THEN 'pending' ELSE status END
     WHERE id = ? AND user_id = ?
-  `).run(
-    body.is_active !== undefined ? (body.is_active ? 1 : 0) : null,
-    body.phone_number ?? null,
-    body.schedule_type ?? null,
-    id,
-    session.user.id
-  );
+  `).run(message_text ?? null, scheduled_for ?? null, target_phone ?? null, id, session.user.id);
 
   return NextResponse.json({ message: "Updated" });
 }
 
-// DELETE remove schedule
+// DELETE: Remove single message
 export async function DELETE(
   _req: NextRequest,
   { params }: { params: Promise<{ id: string }> }
@@ -41,7 +36,6 @@ export async function DELETE(
 
   const { id } = await params;
   const db = getDb();
-  db.prepare("DELETE FROM notification_schedules WHERE id = ? AND user_id = ?").run(id, session.user.id);
-
+  db.prepare("DELETE FROM queued_messages WHERE id = ? AND user_id = ?").run(id, session.user.id);
   return NextResponse.json({ message: "Deleted" });
 }

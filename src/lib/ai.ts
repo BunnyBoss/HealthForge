@@ -312,3 +312,27 @@ ${planContent.substring(0, 3000)}
 
 Format as a short, motivational message with bullet points. Start with a greeting.`;
 }
+
+export function buildBulkMessagesPrompt(
+  planContent: string,
+  recipientName: string,
+  days: number,
+  customContext?: string
+): string {
+  return `You are a health coach assistant. Based on the health plan below, generate exactly ${days} unique daily WhatsApp reminder messages for ${recipientName}.
+
+Each message should:
+- Be friendly, motivational, and personal
+- Reference specific items from the health plan (real foods, exercises, etc.)
+- Be concise (under 400 characters each)
+- Use relevant emojis
+- Feel different each day — vary the tone, focus area, and content
+- Start with a greeting mentioning the day or a motivational phrase
+${customContext ? `\nAdditional context/instructions: ${customContext}` : ""}
+
+Health Plan:
+${planContent.substring(0, 4000)}
+
+IMPORTANT: Return ONLY a valid JSON array of exactly ${days} strings. No markdown, no explanation, just the raw JSON array.
+Example format: ["Message 1 text here", "Message 2 text here", ...]`;
+}

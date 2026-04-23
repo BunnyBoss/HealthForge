@@ -22,7 +22,7 @@ export async function POST(
   const { id } = await params;
 
   try {
-    const { focusAreas } = await req.json();
+    const { focusAreas, action, content: providedContent, title: providedTitle } = await req.json();
     const db = getDb();
 
     // Get group
@@ -67,17 +67,50 @@ export async function POST(
     const groupType = (group.group_type as string) || "custom";
     const areas = focusAreas || [];
 
+    if (action === "save") {
+      const planId = uuidv4();
+      const title = providedTitle || `Group Plan: ${group.name as string} (${profilesData.map((p) => p.name).join(", ")})`;
+
+      db.prepare(`
+        INSERT INTO health_plans (id, profile_id, group_id, plan_type, title, content, focus_areas, model_used)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      `).run(planId, members[0].id as string, id, "weekly", title, providedContent, JSON.stringify(areas), config.model);
+
+      return NextResponse.json({
+        id: planId,
+        title,
+        content: providedContent,
+        plan_type: "weekly",
+        focus_areas: areas,
+        model_used: config.model,
+        created_at: new Date().toISOString(),
+      });
+    }
+
     const messages = [
       { role: "system", content: buildGroupSystemPrompt(profilesData) },
       { role: "user", content: buildGroupPlanPrompt(profilesData, groupType, groupGoals, areas) },
     ];
 
     const content = await generateCompletion(config, messages);
-
-    const planId = uuidv4();
     const memberNames = profilesData.map((p) => p.name).join(", ");
     const title = `Group Plan: ${group.name as string} (${memberNames})`;
 
+    if (action === "generate") {
+      return NextResponse.json({
+        id: "temp_" + Date.now(),
+        title,
+        content,
+        plan_type: "weekly",
+        focus_areas: areas,
+        model_used: config.model,
+        created_at: new Date().toISOString(),
+        isTemp: true,
+      });
+    }
+
+    // Legacy default: save and generate
+    const planId = uuidv4();
     db.prepare(`
       INSERT INTO health_plans (id, profile_id, group_id, plan_type, title, content, focus_areas, model_used)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?)

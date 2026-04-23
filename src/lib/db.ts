@@ -122,11 +122,31 @@ function initSchema() {
       phone_number TEXT,
       updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
     );
+
+    CREATE TABLE IF NOT EXISTS queued_messages (
+      id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      profile_id TEXT REFERENCES profiles(id) ON DELETE CASCADE,
+      group_id TEXT REFERENCES profile_groups(id) ON DELETE CASCADE,
+      target_phone TEXT NOT NULL,
+      cc_phone TEXT,
+      message_text TEXT NOT NULL,
+      scheduled_for DATETIME NOT NULL,
+      status TEXT DEFAULT 'pending',
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    );
   `);
 
   // Add group_id to health_plans if not exists
   try {
     db.exec(`ALTER TABLE health_plans ADD COLUMN group_id TEXT REFERENCES profile_groups(id) ON DELETE CASCADE`);
+  } catch {
+    // Column already exists
+  }
+
+  // Add admin_phone to user_settings if not exists
+  try {
+    db.exec(`ALTER TABLE user_settings ADD COLUMN admin_phone TEXT`);
   } catch {
     // Column already exists
   }

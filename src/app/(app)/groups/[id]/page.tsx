@@ -2,6 +2,7 @@
 
 import { useEffect, useState, use } from "react";
 import Link from "next/link";
+import CommunicationsTab from "@/components/CommunicationsTab";
 
 interface Profile {
   id: string;
@@ -32,6 +33,7 @@ interface Plan {
   model_used: string;
   created_at: string;
   focus_areas: string[];
+  isTemp?: boolean;
 }
 
 const FOCUS_AREAS = [
@@ -87,19 +89,50 @@ export default function GroupDetailPage({ params }: { params: Promise<{ id: stri
       const res = await fetch(`/api/groups/${id}/plan`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ focusAreas }),
+        body: JSON.stringify({ focusAreas, action: "generate" }),
       });
       const data = await res.json();
       if (!res.ok) {
         setPlanError(data.error || "Failed to generate plan");
       } else {
         setActivePlan(data);
-        setPlans((prev) => [data, ...prev]);
       }
     } catch {
       setPlanError("Failed to connect to AI. Check your LLM settings.");
     } finally {
       setGeneratingPlan(false);
+    }
+  };
+
+  const [savingPlan, setSavingPlan] = useState(false);
+  const savePlan = async () => {
+    if (!activePlan || !activePlan.isTemp) return;
+    setSavingPlan(true);
+    setPlanError("");
+
+    try {
+      const res = await fetch(`/api/groups/${id}/plan`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          focusAreas: activePlan.focus_areas,
+          action: "save",
+          content: activePlan.content,
+          title: activePlan.title,
+        }),
+      });
+
+      const data = await res.json();
+      if (!res.ok) {
+        setPlanError(data.error || "Failed to save plan");
+      } else {
+        setActivePlan(data); // Replaces temp plan with saved plan (no isTemp)
+        alert("Plan saved successfully! It is now available in the Plans & Notifications tab.");
+      }
+    } catch {
+      setPlanError("Failed to save plan.");
+    } finally {
+      setSavingPlan(false);
     }
   };
 
@@ -154,9 +187,9 @@ export default function GroupDetailPage({ params }: { params: Promise<{ id: stri
       </div>
 
       <div className="tabs">
-        {["overview", "plans"].map((tab) => (
+        {["overview", "plan", "plans-notifications"].map((tab) => (
           <button key={tab} className={`tab ${activeTab === tab ? "active" : ""}`} onClick={() => setActiveTab(tab)}>
-            {tab === "overview" ? "📋 Overview" : "📑 Plans"}
+            {tab === "overview" ? "📋 Overview" : tab === "plan" ? "📑 Plan" : "📊 Plans & Notifications"}
           </button>
         ))}
       </div>
@@ -240,7 +273,7 @@ export default function GroupDetailPage({ params }: { params: Promise<{ id: stri
         </div>
       )}
 
-      {activeTab === "plans" && (
+      {activeTab === "plan" && (
         <div className="animate-fade-in">
           <div className="plan-generator">
             <div className="plan-options">
@@ -266,20 +299,8 @@ export default function GroupDetailPage({ params }: { params: Promise<{ id: stri
 
               {planError && <div className="form-error" style={{ marginTop: "0.75rem" }}>{planError}</div>}
 
-              {plans.length > 0 && (
-                <div style={{ marginTop: "1.5rem" }}>
-                  <div className="form-label" style={{ marginBottom: "0.5rem" }}>Past Group Plans</div>
-                  <div className="plan-list">
-                    {plans.map((plan) => (
-                      <div key={plan.id} className="plan-list-item" onClick={() => setActivePlan(plan)}>
-                        <div>
-                          <div className="title">{plan.title}</div>
-                          <div className="meta">{new Date(plan.created_at).toLocaleDateString()}</div>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                </div>
+              {planError && (
+                <div className="form-error" style={{ marginTop: "0.75rem" }}>{planError}</div>
               )}
             </div>
 
@@ -295,18 +316,45 @@ export default function GroupDetailPage({ params }: { params: Promise<{ id: stri
                   <h1 style={{ color: "var(--accent-primary)", marginBottom: "0.5rem" }}>{activePlan.title}</h1>
                   <div style={{ fontSize: "0.8rem", color: "var(--text-muted)", marginBottom: "1.5rem" }}>
                     Generated on {new Date(activePlan.created_at).toLocaleString()} · Model: {activePlan.model_used}
+                    {activePlan.isTemp && <span style={{ color: "var(--accent-primary)", marginLeft: "0.5rem", fontWeight: 600 }}>[Unsaved Preview]</span>}
                   </div>
                   <div className="plan-markdown" dangerouslySetInnerHTML={{ __html: simpleMarkdown(activePlan.content) }} />
+                  {activePlan.isTemp && (
+                    <div style={{ marginTop: "2rem", padding: "1.5rem", background: "var(--bg-card)", borderRadius: "var(--radius-md)", border: "1px solid var(--border-default)", textAlign: "center" }}>
+                      <h3 style={{ marginBottom: "0.5rem" }}>💾 Save this Plan?</h3>
+                      <p style={{ color: "var(--text-muted)", marginBottom: "1rem" }}>This plan is currently a preview. Save it to add it to the Plans & Notifications tab.</p>
+                      <button className="btn btn-primary" onClick={savePlan} disabled={savingPlan}>
+                        {savingPlan ? "Saving..." : "Save Plan to Group"}
+                      </button>
+                    </div>
+                  )}
+                </div>
+              ) : plans.length > 0 ? (
+                <div className="animate-fade-in">
+                  <h1 style={{ color: "var(--accent-primary)", marginBottom: "0.5rem" }}>{plans[0].title}</h1>
+                  <div style={{ fontSize: "0.8rem", color: "var(--text-muted)", marginBottom: "1.5rem" }}>
+                    Generated on {new Date(plans[0].created_at).toLocaleString()} · Model: {plans[0].model_used}
+                  </div>
+                  <div className="plan-markdown" dangerouslySetInnerHTML={{ __html: simpleMarkdown(plans[0].content) }} />
                 </div>
               ) : (
                 <div className="empty-state">
                   <div className="icon">📋</div>
-                  <h3>No plan selected</h3>
-                  <p>Generate a new group plan or select a past plan</p>
+                  <h3>No plan yet</h3>
+                  <p>Generate a new group plan using the options on the left</p>
                 </div>
               )}
             </div>
           </div>
+        </div>
+      )}
+
+      {activeTab === "plans-notifications" && (
+        <div className="animate-fade-in">
+          <CommunicationsTab
+            groupId={group.id}
+            entityName={group.name}
+          />
         </div>
       )}
     </div>
