@@ -203,3 +203,40 @@ export async function DELETE(
 
   return NextResponse.json({ deleted: result.changes });
 }
+
+export async function PATCH(
+  req: NextRequest,
+  { params }: { params: Promise<{ id: string }> }
+) {
+  const session = await auth();
+  if (!session?.user?.id) {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
+
+  const { id } = await params;
+  const body = await req.json().catch(() => ({}));
+  const ids = Array.isArray(body?.ids) ? body.ids.filter((planId: unknown) => typeof planId === "string") : [];
+  const archived = body?.archived === undefined ? true : Boolean(body.archived);
+  if (ids.length === 0) {
+    return NextResponse.json({ error: "ids array is required" }, { status: 400 });
+  }
+
+  const db = getDb();
+  const group = db
+    .prepare("SELECT id FROM profile_groups WHERE id = ? AND user_id = ?")
+    .get(id, session.user.id);
+
+  if (!group) {
+    return NextResponse.json({ error: "Group not found" }, { status: 404 });
+  }
+
+  const placeholders = ids.map(() => "?").join(",");
+  const result = db.prepare(`
+    UPDATE health_plans
+    SET is_archived = ?
+    WHERE group_id = ?
+      AND id IN (${placeholders})
+  `).run(archived ? 1 : 0, id, ...ids);
+
+  return NextResponse.json({ updated: result.changes, archived });
+}

@@ -179,3 +179,29 @@ export async function DELETE(req: NextRequest) {
 
   return NextResponse.json({ deleted: result.changes });
 }
+
+// PATCH archive/unarchive plans for a profile (single/bulk)
+export async function PATCH(req: NextRequest) {
+  const session = await auth();
+  if (!session?.user?.id) {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
+
+  const body = await req.json().catch(() => ({}));
+  const ids = Array.isArray(body?.ids) ? body.ids.filter((id: unknown) => typeof id === "string") : [];
+  const archived = body?.archived === undefined ? true : Boolean(body.archived);
+  if (ids.length === 0) {
+    return NextResponse.json({ error: "ids array is required" }, { status: 400 });
+  }
+
+  const db = getDb();
+  const placeholders = ids.map(() => "?").join(",");
+  const result = db.prepare(`
+    UPDATE health_plans
+    SET is_archived = ?
+    WHERE id IN (${placeholders})
+      AND profile_id IN (SELECT id FROM profiles WHERE user_id = ?)
+  `).run(archived ? 1 : 0, ...ids, session.user.id);
+
+  return NextResponse.json({ updated: result.changes, archived });
+}

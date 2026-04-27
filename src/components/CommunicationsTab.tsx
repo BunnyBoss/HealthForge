@@ -10,6 +10,7 @@ interface Plan {
   created_at: string;
   model_used: string;
   content: string;
+  is_archived?: number;
   focus_areas?: string[];
 }
 
@@ -21,6 +22,7 @@ interface QueuedMessage {
   group_id: string | null;
   message_text: string;
   scheduled_for: string;
+  created_at?: string;
   status: QueueStatus;
   target_phone: string;
   cc_phone: string | null;
@@ -43,6 +45,17 @@ interface Props {
 }
 
 type PlanSortKey = "created_at" | "title" | "plan_type" | "model_used";
+type MessageSortKey = "scheduled_for" | "status" | "plan_title" | "target_phone" | "created_at";
+type GenerationMode = "ai_plan" | "manual_frequency";
+
+const QUEUE_STATUS_OPTIONS: QueueStatus[] = [
+  "pending",
+  "submitting",
+  "submitted",
+  "delivered",
+  "read",
+  "failed",
+];
 
 const STATUS_BADGE: Record<QueueStatus, { bg: string; color: string; label: string }> = {
   pending: { bg: "rgba(245,158,11,0.15)", color: "#f59e0b", label: "Pending" },
@@ -59,7 +72,7 @@ function iso(value?: string | null): string {
 }
 
 function canEditMessage(status: QueueStatus): boolean {
-  return status === "pending" || status === "failed";
+  return status !== "delivered" && status !== "read" && status !== "submitting";
 }
 
 export default function PlansNotificationsTab({ profileId, groupId, entityName, onOpenChatWithPlan }: Props) {
@@ -75,10 +88,12 @@ export default function PlansNotificationsTab({ profileId, groupId, entityName, 
   const [planSortDir, setPlanSortDir] = useState<"asc" | "desc">("desc");
   const [selectedPlanIds, setSelectedPlanIds] = useState<string[]>([]);
   const [openPlanId, setOpenPlanId] = useState<string | null>(null);
+  const [hideArchivedPlans, setHideArchivedPlans] = useState(true);
   const [planPage, setPlanPage] = useState(1);
   const [planPageSize, setPlanPageSize] = useState(5);
   const [planActionBusy, setPlanActionBusy] = useState(false);
   const [planError, setPlanError] = useState("");
+  const [planSuccess, setPlanSuccess] = useState("");
 
   // Manual plan creation
   const [showManualPlanForm, setShowManualPlanForm] = useState(false);
@@ -93,11 +108,13 @@ export default function PlansNotificationsTab({ profileId, groupId, entityName, 
   const [targetPhone, setTargetPhone] = useState("");
   const [targetCountryIso, setTargetCountryIso] = useState<CountryIso>("IN");
   const [ccSelf, setCcSelf] = useState(false);
+  const [generationMode, setGenerationMode] = useState<GenerationMode>("ai_plan");
   const [days, setDays] = useState(7);
-  const [scheduleTime, setScheduleTime] = useState("08:00");
+  const [messagesPerDay, setMessagesPerDay] = useState(3);
   const [customContext, setCustomContext] = useState("");
   const [generating, setGenerating] = useState(false);
   const [genError, setGenError] = useState("");
+  const [genSuccess, setGenSuccess] = useState("");
 
   // Inline edit state for notifications
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -105,6 +122,25 @@ export default function PlansNotificationsTab({ profileId, groupId, entityName, 
   const [editTime, setEditTime] = useState("");
   const [editPhone, setEditPhone] = useState("");
   const [editCountryIso, setEditCountryIso] = useState<CountryIso>("IN");
+
+  // Notification table tools
+  const [messageSearch, setMessageSearch] = useState("");
+  const [messageSortBy, setMessageSortBy] = useState<MessageSortKey>("scheduled_for");
+  const [messageSortDir, setMessageSortDir] = useState<"asc" | "desc">("asc");
+  const [messagePage, setMessagePage] = useState(1);
+  const [messagePageSize, setMessagePageSize] = useState(10);
+  const [selectedMessageIds, setSelectedMessageIds] = useState<string[]>([]);
+  const [messageActionBusy, setMessageActionBusy] = useState(false);
+  const [messageError, setMessageError] = useState("");
+  const [messageSuccess, setMessageSuccess] = useState("");
+  const [statusFilters, setStatusFilters] = useState<Record<QueueStatus, boolean>>({
+    pending: true,
+    submitting: true,
+    submitted: false,
+    delivered: true,
+    read: true,
+    failed: true,
+  });
 
   const queryParam = profileId ? `profile_id=${profileId}` : `group_id=${groupId}`;
   const planApiPath = profileId ? `/api/plans?profileId=${profileId}` : `/api/groups/${groupId}/plan`;
@@ -152,11 +188,14 @@ export default function PlansNotificationsTab({ profileId, groupId, entityName, 
 
   const filteredPlans = useMemo(() => {
     const q = planSearch.trim().toLowerCase();
+    const visible = hideArchivedPlans
+      ? plans.filter((p) => Number(p.is_archived || 0) === 0)
+      : plans;
     const base = q
-      ? plans.filter((p) =>
+      ? visible.filter((p) =>
         `${p.title} ${p.plan_type} ${p.model_used} ${p.content}`.toLowerCase().includes(q)
       )
-      : plans;
+      : visible;
 
     const sorted = [...base].sort((a, b) => {
       const dir = planSortDir === "asc" ? 1 : -1;
@@ -168,7 +207,40 @@ export default function PlansNotificationsTab({ profileId, groupId, entityName, 
       return av.localeCompare(bv) * dir;
     });
     return sorted;
-  }, [plans, planSearch, planSortBy, planSortDir]);
+  }, [plans, planSearch, planSortBy, planSortDir, hideArchivedPlans]);
+
+  const filteredMessages = useMemo(() => {
+    const q = messageSearch.trim().toLowerCase();
+    const byStatus = messages.filter((m) => statusFilters[m.status]);
+    const bySearch = q
+      ? byStatus.filter((m) =>
+        `${m.id} ${m.plan_title || ""} ${m.plan_id || ""} ${m.message_text} ${m.target_phone} ${m.status}`.toLowerCase().includes(q)
+      )
+      : byStatus;
+
+    const sorted = [...bySearch].sort((a, b) => {
+      const dir = messageSortDir === "asc" ? 1 : -1;
+      if (messageSortBy === "scheduled_for") {
+        return (new Date(a.scheduled_for).getTime() - new Date(b.scheduled_for).getTime()) * dir;
+      }
+      if (messageSortBy === "created_at") {
+        return (new Date(a.created_at || 0).getTime() - new Date(b.created_at || 0).getTime()) * dir;
+      }
+      if (messageSortBy === "status") {
+        return a.status.localeCompare(b.status) * dir;
+      }
+      if (messageSortBy === "target_phone") {
+        return a.target_phone.localeCompare(b.target_phone) * dir;
+      }
+      return (a.plan_title || "").localeCompare(b.plan_title || "") * dir;
+    });
+    return sorted;
+  }, [messages, messageSearch, messageSortBy, messageSortDir, statusFilters]);
+
+  const totalMessagePages = Math.max(1, Math.ceil(filteredMessages.length / messagePageSize));
+  const currentMessagePage = Math.min(messagePage, totalMessagePages);
+  const pagedMessages = filteredMessages.slice((currentMessagePage - 1) * messagePageSize, currentMessagePage * messagePageSize);
+  const allFilteredMessagesSelected = filteredMessages.length > 0 && filteredMessages.every((m) => selectedMessageIds.includes(m.id));
 
   const totalPlanPages = Math.max(1, Math.ceil(filteredPlans.length / planPageSize));
   const currentPlanPage = Math.min(planPage, totalPlanPages);
@@ -177,7 +249,11 @@ export default function PlansNotificationsTab({ profileId, groupId, entityName, 
 
   useEffect(() => {
     setPlanPage(1);
-  }, [planSearch, planPageSize]);
+  }, [planSearch, planPageSize, hideArchivedPlans]);
+
+  useEffect(() => {
+    setMessagePage(1);
+  }, [messageSearch, messagePageSize, messageSortBy, messageSortDir, statusFilters]);
 
   useEffect(() => {
     if (selectedPlanId && !plans.some((p) => p.id === selectedPlanId)) {
@@ -189,11 +265,19 @@ export default function PlansNotificationsTab({ profileId, groupId, entityName, 
     setSelectedPlanIds((prev) => prev.filter((id) => plans.some((p) => p.id === id)));
   }, [plans, selectedPlanId, openPlanId]);
 
+  useEffect(() => {
+    setSelectedMessageIds((prev) => prev.filter((id) => messages.some((m) => m.id === id)));
+    if (editingId && !messages.some((m) => m.id === editingId)) {
+      setEditingId(null);
+    }
+  }, [messages, editingId]);
+
   async function generate(e: React.FormEvent) {
     e.preventDefault();
     if (!selectedPlan) return;
     setGenerating(true);
     setGenError("");
+    setGenSuccess("");
     try {
       const res = await fetch("/api/messages", {
         method: "POST",
@@ -206,7 +290,8 @@ export default function PlansNotificationsTab({ profileId, groupId, entityName, 
           cc_phone: ccSelf && adminPhone ? adminPhone : null,
           cc_country_iso: defaultCountryIso,
           days,
-          schedule_time: scheduleTime,
+          generation_mode: generationMode,
+          messages_per_day: generationMode === "manual_frequency" ? messagesPerDay : undefined,
           custom_context: customContext || null,
           recipient_name: entityName,
           plan_content: selectedPlan.content,
@@ -219,10 +304,12 @@ export default function PlansNotificationsTab({ profileId, groupId, entityName, 
         return;
       }
       await fetchMessages();
+      const modeLabel = data.mode === "ai_plan" ? "AI mode" : "Manual mode";
+      setGenSuccess(`Queued ${data.created || 0} notification(s) using ${modeLabel}.`);
       setShowForm(false);
       setTargetPhone("");
       setDays(7);
-      setScheduleTime("08:00");
+      setMessagesPerDay(3);
       setCustomContext("");
       setCcSelf(false);
     } catch {
@@ -331,6 +418,39 @@ export default function PlansNotificationsTab({ profileId, groupId, entityName, 
     }
   }
 
+  async function archivePlans(ids: string[], archived: boolean) {
+    if (ids.length === 0) return;
+    const actionLabel = archived ? "archive" : "unarchive";
+    if (!confirm(`${actionLabel[0].toUpperCase() + actionLabel.slice(1)} ${ids.length} plan(s)?`)) return;
+
+    setPlanActionBusy(true);
+    setPlanError("");
+    setPlanSuccess("");
+    try {
+      const url = profileId ? "/api/plans" : `/api/groups/${groupId}/plan`;
+      const res = await fetch(url, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ids, archived }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        setPlanError(data.error || `Failed to ${actionLabel} plans`);
+        return;
+      }
+      await refreshAll();
+      setSelectedPlanIds((prev) => prev.filter((id) => !ids.includes(id)));
+      setPlanSuccess(`${actionLabel[0].toUpperCase() + actionLabel.slice(1)}d ${data.updated || ids.length} plan(s).`);
+      if (openPlanId && ids.includes(openPlanId) && archived && hideArchivedPlans) {
+        setOpenPlanId(null);
+      }
+    } catch {
+      setPlanError(`Failed to ${actionLabel} plans`);
+    } finally {
+      setPlanActionBusy(false);
+    }
+  }
+
   function exportPlansCsv() {
     if (filteredPlans.length === 0) return;
     const escapeCsv = (v: string) => `"${v.replace(/"/g, "\"\"")}"`;
@@ -359,6 +479,89 @@ export default function PlansNotificationsTab({ profileId, groupId, entityName, 
     URL.revokeObjectURL(url);
   }
 
+  function toggleSelectMessage(id: string) {
+    setSelectedMessageIds((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]));
+  }
+
+  function toggleSelectAllFilteredMessages() {
+    if (allFilteredMessagesSelected) {
+      setSelectedMessageIds((prev) => prev.filter((id) => !filteredMessages.some((m) => m.id === id)));
+      return;
+    }
+    const set = new Set(selectedMessageIds);
+    filteredMessages.forEach((m) => set.add(m.id));
+    setSelectedMessageIds(Array.from(set));
+  }
+
+  function toggleStatusFilter(status: QueueStatus) {
+    setStatusFilters((prev) => ({ ...prev, [status]: !prev[status] }));
+  }
+
+  function resetMessageFilters() {
+    setMessageSearch("");
+    setMessageSortBy("scheduled_for");
+    setMessageSortDir("asc");
+    setStatusFilters({
+      pending: true,
+      submitting: true,
+      submitted: false,
+      delivered: true,
+      read: true,
+      failed: true,
+    });
+  }
+
+  function exportMessagesCsv() {
+    if (filteredMessages.length === 0) return;
+    const escapeCsv = (v: string) => `"${v.replace(/"/g, "\"\"")}"`;
+    const rows = filteredMessages.map((m) => [
+      m.id,
+      m.plan_id || "",
+      m.plan_title || "",
+      m.status,
+      new Date(m.scheduled_for).toISOString(),
+      m.target_phone,
+      m.cc_phone || "",
+      m.message_text,
+      m.submitted_at || "",
+      m.delivered_at || "",
+      m.read_at || "",
+      m.last_error || "",
+    ]);
+    const csv = [
+      ["id", "plan_id", "plan_title", "status", "scheduled_for", "target_phone", "cc_phone", "message_text", "submitted_at", "delivered_at", "read_at", "last_error"],
+      ...rows,
+    ]
+      .map((r) => r.map((x) => escapeCsv(String(x ?? ""))).join(","))
+      .join("\n");
+
+    const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `${entityName.replace(/\s+/g, "_")}_notifications.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
+  }
+
+  async function deleteSelectedMessages(ids: string[]) {
+    if (ids.length === 0) return;
+    if (!confirm(`Delete ${ids.length} notification(s)?`)) return;
+    setMessageActionBusy(true);
+    setMessageError("");
+    setMessageSuccess("");
+    try {
+      await Promise.all(ids.map((id) => fetch(`/api/messages/${id}`, { method: "DELETE" })));
+      await fetchMessages();
+      setSelectedMessageIds((prev) => prev.filter((id) => !ids.includes(id)));
+      setMessageSuccess(`Deleted ${ids.length} notification(s).`);
+    } catch {
+      setMessageError("Failed to delete selected notifications.");
+    } finally {
+      setMessageActionBusy(false);
+    }
+  }
+
   async function saveEdit(id: string) {
     const res = await fetch(`/api/messages/${id}`, {
       method: "PUT",
@@ -376,19 +579,34 @@ export default function PlansNotificationsTab({ profileId, groupId, entityName, 
       return;
     }
     await fetchMessages();
+    setMessageSuccess("Notification updated and reset to pending.");
     setEditingId(null);
   }
 
   async function deleteMsg(id: string) {
     if (!confirm("Delete this notification?")) return;
+    setMessageError("");
     await fetch(`/api/messages/${id}`, { method: "DELETE" });
     await fetchMessages();
+    setMessageSuccess("Notification deleted.");
   }
 
   async function clearAllMsgs() {
     if (!confirm(`Clear all notifications for ${entityName}?`)) return;
-    await fetch(`/api/messages?${queryParam}`, { method: "DELETE" });
-    setMessages([]);
+    setMessageActionBusy(true);
+    setMessageError("");
+    setMessageSuccess("");
+    try {
+      await fetch(`/api/messages?${queryParam}`, { method: "DELETE" });
+      setMessages([]);
+      setSelectedMessageIds([]);
+      setEditingId(null);
+      setMessageSuccess("All notifications cleared.");
+    } catch {
+      setMessageError("Failed to clear notifications.");
+    } finally {
+      setMessageActionBusy(false);
+    }
   }
 
   function startEdit(msg: QueuedMessage) {
@@ -405,7 +623,7 @@ export default function PlansNotificationsTab({ profileId, groupId, entityName, 
     <div className="animate-fade-in">
       <div className="section-title" style={{ marginBottom: "0.75rem" }}>📑 All Plans</div>
 
-      <div style={{ display: "grid", gridTemplateColumns: "2fr 1fr 1fr auto auto auto auto", gap: "0.5rem", marginBottom: "0.75rem" }}>
+      <div style={{ display: "grid", gridTemplateColumns: "2fr 1fr 1fr auto auto auto auto auto", gap: "0.5rem", marginBottom: "0.75rem" }}>
         <input className="form-input" placeholder="Search title/type/model/content..." value={planSearch} onChange={(e) => setPlanSearch(e.target.value)} />
         <select className="form-select" value={planSortBy} onChange={(e) => setPlanSortBy(e.target.value as PlanSortKey)}>
           <option value="created_at">Sort: Created</option>
@@ -419,7 +637,10 @@ export default function PlansNotificationsTab({ profileId, groupId, entityName, 
         </select>
         <button className="btn btn-secondary btn-sm" onClick={() => refreshAll()} disabled={planActionBusy}>↻ Refresh</button>
         <button className="btn btn-secondary btn-sm" onClick={exportPlansCsv} disabled={filteredPlans.length === 0}>⬇ Export CSV</button>
-        <button className="btn btn-secondary btn-sm" onClick={() => { setPlanSearch(""); setPlanSortBy("created_at"); setPlanSortDir("desc"); }}>Reset</button>
+        <button className="btn btn-secondary btn-sm" onClick={() => { setPlanSearch(""); setPlanSortBy("created_at"); setPlanSortDir("desc"); setHideArchivedPlans(true); }}>Reset</button>
+        <button className="btn btn-secondary btn-sm" onClick={() => setHideArchivedPlans((v) => !v)}>
+          {hideArchivedPlans ? "Show Archived" : "Hide Archived"}
+        </button>
         <button className="btn btn-primary btn-sm" onClick={() => setShowManualPlanForm((v) => !v)}>
           {showManualPlanForm ? "✕ Cancel" : "+ Add Manual Plan"}
         </button>
@@ -435,6 +656,12 @@ export default function PlansNotificationsTab({ profileId, groupId, entityName, 
             <option value={10}>10 / page</option>
             <option value={20}>20 / page</option>
           </select>
+          <button className="btn btn-secondary btn-sm" disabled={selectedPlanIds.length === 0 || planActionBusy} onClick={() => archivePlans(selectedPlanIds, true)}>
+            Archive Selected ({selectedPlanIds.length})
+          </button>
+          <button className="btn btn-secondary btn-sm" disabled={selectedPlanIds.length === 0 || planActionBusy} onClick={() => archivePlans(selectedPlanIds, false)}>
+            Unarchive Selected ({selectedPlanIds.length})
+          </button>
           <button className="btn btn-danger btn-sm" disabled={selectedPlanIds.length === 0 || planActionBusy} onClick={() => deletePlans(selectedPlanIds)}>
             🗑 Delete Selected ({selectedPlanIds.length})
           </button>
@@ -465,6 +692,7 @@ export default function PlansNotificationsTab({ profileId, groupId, entityName, 
       )}
 
       {planError && <div className="form-error" style={{ marginBottom: "0.75rem" }}>{planError}</div>}
+      {planSuccess && <div style={{ marginBottom: "0.75rem", color: "#22c55e", fontSize: "0.82rem", fontWeight: 600 }}>{planSuccess}</div>}
 
       {plans.length === 0 ? (
         <div style={{ color: "var(--text-muted)", fontSize: "0.85rem", marginBottom: "2rem", padding: "1rem", textAlign: "center", background: "var(--bg-card)", borderRadius: "var(--radius-md)", border: "1px solid var(--border-subtle)" }}>
@@ -491,7 +719,10 @@ export default function PlansNotificationsTab({ profileId, groupId, entityName, 
                     <input type="checkbox" checked={selectedPlanIds.includes(p.id)} onChange={() => toggleSelectPlan(p.id)} />
                   </td>
                   <td style={td}><code style={{ fontSize: "0.72rem", opacity: 0.7 }}>{p.id.slice(0, 8)}…</code></td>
-                  <td style={{ ...td, fontWeight: 600, color: "var(--accent-primary)" }}>{p.title}</td>
+                  <td style={{ ...td, fontWeight: 600, color: "var(--accent-primary)" }}>
+                    {p.title}
+                    {Number(p.is_archived || 0) === 1 && <span style={{ ...chip, marginLeft: "0.4rem", opacity: 0.75 }}>archived</span>}
+                  </td>
                   <td style={td}><span style={chip}>{p.plan_type}</span></td>
                   <td style={td}>{new Date(p.created_at).toLocaleString()}</td>
                   <td style={{ ...td, opacity: 0.7 }}>{p.model_used}</td>
@@ -504,6 +735,11 @@ export default function PlansNotificationsTab({ profileId, groupId, entityName, 
                         <button className="btn btn-primary btn-sm" onClick={() => onOpenChatWithPlan(p)}>
                           Chat
                         </button>
+                      )}
+                      {Number(p.is_archived || 0) === 1 ? (
+                        <button className="btn btn-secondary btn-sm" onClick={() => archivePlans([p.id], false)} disabled={planActionBusy}>Unarchive</button>
+                      ) : (
+                        <button className="btn btn-secondary btn-sm" onClick={() => archivePlans([p.id], true)} disabled={planActionBusy}>Archive</button>
                       )}
                       <button className="btn btn-danger btn-sm" onClick={() => deletePlans([p.id])} disabled={planActionBusy}>Delete</button>
                     </div>
@@ -539,12 +775,38 @@ export default function PlansNotificationsTab({ profileId, groupId, entityName, 
         <div className="section-title" style={{ margin: 0 }}>📬 Notification Queue</div>
         <div style={{ fontSize: "0.78rem", color: "var(--text-muted)" }}>Auto-refresh every 10 seconds</div>
         <div style={{ display: "flex", gap: "0.5rem" }}>
-          {messages.length > 0 && <button className="btn btn-secondary btn-sm" onClick={clearAllMsgs}>🗑️ Clear All</button>}
-          <button className="btn btn-primary btn-sm" onClick={() => setShowForm(!showForm)} disabled={plans.length === 0} title={plans.length === 0 ? "Generate a health plan first" : ""}>
+          {messages.length > 0 && <button className="btn btn-secondary btn-sm" onClick={clearAllMsgs} disabled={messageActionBusy}>🗑️ Clear All</button>}
+          <button
+            className="btn btn-primary btn-sm"
+            onClick={() => {
+              setShowForm(!showForm);
+              setGenError("");
+              setGenSuccess("");
+            }}
+            disabled={plans.length === 0}
+            title={plans.length === 0 ? "Generate a health plan first" : ""}
+          >
             {showForm ? "✕ Cancel" : "✨ Generate Messages"}
           </button>
         </div>
       </div>
+
+      {genSuccess && (
+        <div
+          style={{
+            marginBottom: "0.75rem",
+            padding: "0.55rem 0.7rem",
+            border: "1px solid rgba(34,197,94,0.35)",
+            borderRadius: "0.5rem",
+            background: "rgba(34,197,94,0.10)",
+            color: "#22c55e",
+            fontSize: "0.82rem",
+            fontWeight: 600,
+          }}
+        >
+          {genSuccess}
+        </div>
+      )}
 
       {plans.length === 0 && (
         <div className="disclaimer" style={{ marginBottom: "1rem" }}>
@@ -558,6 +820,20 @@ export default function PlansNotificationsTab({ profileId, groupId, entityName, 
           <h3 style={{ marginBottom: "1rem" }}>✨ Generate AI Message Schedule</h3>
           <form onSubmit={generate}>
             <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(190px, 1fr))", gap: "0.75rem" }}>
+              <div className="form-group">
+                <label className="form-label">Generation Mode</label>
+                <select
+                  className="form-select"
+                  value={generationMode}
+                  onChange={(e) => {
+                    setGenerationMode(e.target.value as GenerationMode);
+                    setGenError("");
+                  }}
+                >
+                  <option value="ai_plan">AI (From Plan Items)</option>
+                  <option value="manual_frequency">Manual (Days + Frequency)</option>
+                </select>
+              </div>
               <div className="form-group">
                 <label className="form-label">Based on Plan</label>
                 <select className="form-select" value={selectedPlanId} onChange={(e) => setSelectedPlanId(e.target.value)}>
@@ -580,11 +856,18 @@ export default function PlansNotificationsTab({ profileId, groupId, entityName, 
                 <label className="form-label">Days</label>
                 <input className="form-input" type="number" min={1} max={30} value={days} onChange={(e) => setDays(Number(e.target.value))} />
               </div>
-              <div className="form-group">
-                <label className="form-label">Daily Send Time</label>
-                <input className="form-input" type="time" value={scheduleTime} onChange={(e) => setScheduleTime(e.target.value)} />
-              </div>
+              {generationMode === "manual_frequency" && (
+                <div className="form-group">
+                  <label className="form-label">Frequency (Messages/Day)</label>
+                  <input className="form-input" type="number" min={1} max={12} value={messagesPerDay} onChange={(e) => setMessagesPerDay(Number(e.target.value))} />
+                </div>
+              )}
             </div>
+            {generationMode === "ai_plan" && (
+              <div style={{ marginTop: "0.4rem", color: "var(--text-muted)", fontSize: "0.78rem" }}>
+                AI mode queues all actionable items from the selected plan for the first {days} day(s). Missing times are inferred automatically.
+              </div>
+            )}
             <div className="form-group" style={{ marginTop: "0.75rem" }}>
               <label style={{ display: "flex", alignItems: "center", gap: "0.5rem", cursor: "pointer" }}>
                 <input type="checkbox" checked={ccSelf} onChange={(e) => setCcSelf(e.target.checked)} style={{ width: "16px", height: "16px", accentColor: "var(--accent-primary)" }} />
@@ -599,21 +882,78 @@ export default function PlansNotificationsTab({ profileId, groupId, entityName, 
             </div>
             {genError && <div className="form-error" style={{ marginBottom: "0.75rem" }}>{genError}</div>}
             <button type="submit" className="btn btn-primary" disabled={generating || !targetPhone.trim()}>
-              {generating ? (<><span className="loading-spinner" /> Generating {days} messages...</>) : `✨ Generate ${days} Messages`}
+              {generating ? (
+                <><span className="loading-spinner" /> Generating queue...</>
+              ) : generationMode === "ai_plan" ? (
+                "✨ Generate Queue from Plan"
+              ) : (
+                "✨ Generate Custom Queue"
+              )}
             </button>
           </form>
         </div>
       )}
 
-      {messages.length === 0 ? (
+      <div style={{ display: "grid", gridTemplateColumns: "2fr 1fr 1fr auto auto auto", gap: "0.5rem", marginBottom: "0.75rem" }}>
+        <input className="form-input" placeholder="Search id/plan/message/phone/status..." value={messageSearch} onChange={(e) => setMessageSearch(e.target.value)} />
+        <select className="form-select" value={messageSortBy} onChange={(e) => setMessageSortBy(e.target.value as MessageSortKey)}>
+          <option value="scheduled_for">Sort: Scheduled</option>
+          <option value="status">Sort: Status</option>
+          <option value="plan_title">Sort: Plan</option>
+          <option value="target_phone">Sort: Phone</option>
+          <option value="created_at">Sort: Created</option>
+        </select>
+        <select className="form-select" value={messageSortDir} onChange={(e) => setMessageSortDir(e.target.value as "asc" | "desc")}>
+          <option value="asc">Oldest / A-Z</option>
+          <option value="desc">Newest / Z-A</option>
+        </select>
+        <button className="btn btn-secondary btn-sm" onClick={() => fetchMessages()} disabled={messageActionBusy}>↻ Refresh</button>
+        <button className="btn btn-secondary btn-sm" onClick={exportMessagesCsv} disabled={filteredMessages.length === 0}>⬇ Export CSV</button>
+        <button className="btn btn-secondary btn-sm" onClick={resetMessageFilters}>Reset</button>
+      </div>
+
+      <div style={{ display: "flex", gap: "0.45rem", flexWrap: "wrap", marginBottom: "0.6rem" }}>
+        {QUEUE_STATUS_OPTIONS.map((status) => (
+          <button
+            key={status}
+            className="btn btn-secondary btn-sm"
+            onClick={() => toggleStatusFilter(status)}
+            style={{ opacity: statusFilters[status] ? 1 : 0.45 }}
+          >
+            {STATUS_BADGE[status].label}
+          </button>
+        ))}
+      </div>
+
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "0.6rem", gap: "0.5rem", flexWrap: "wrap" }}>
+        <div style={{ fontSize: "0.8rem", color: "var(--text-muted)" }}>
+          Showing {filteredMessages.length === 0 ? 0 : (currentMessagePage - 1) * messagePageSize + 1}-{Math.min(currentMessagePage * messagePageSize, filteredMessages.length)} of {filteredMessages.length} filtered notification(s)
+        </div>
+        <div style={{ display: "flex", gap: "0.5rem", alignItems: "center" }}>
+          <select className="form-select" value={messagePageSize} onChange={(e) => setMessagePageSize(Number(e.target.value))}>
+            <option value={5}>5 / page</option>
+            <option value={10}>10 / page</option>
+            <option value={20}>20 / page</option>
+          </select>
+          <button className="btn btn-danger btn-sm" disabled={selectedMessageIds.length === 0 || messageActionBusy} onClick={() => deleteSelectedMessages(selectedMessageIds)}>
+            🗑 Delete Selected ({selectedMessageIds.length})
+          </button>
+        </div>
+      </div>
+
+      {messageError && <div className="form-error" style={{ marginBottom: "0.75rem" }}>{messageError}</div>}
+      {messageSuccess && <div style={{ marginBottom: "0.75rem", color: "#22c55e", fontSize: "0.82rem", fontWeight: 600 }}>{messageSuccess}</div>}
+
+      {filteredMessages.length === 0 ? (
         <div style={{ color: "var(--text-muted)", fontSize: "0.85rem", padding: "1.5rem", textAlign: "center", background: "var(--bg-card)", borderRadius: "var(--radius-md)", border: "1px solid var(--border-subtle)" }}>
-          No notifications scheduled. {plans.length > 0 ? "Click \"Generate Messages\" to create a queue." : ""}
+          No notifications match current filters. {plans.length > 0 ? "Click \"Generate Messages\" to create a queue." : ""}
         </div>
       ) : (
         <div style={{ overflowX: "auto" }}>
           <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "0.82rem" }}>
             <thead>
               <tr style={{ borderBottom: "1px solid var(--border-default)" }}>
+                <th style={th}><input type="checkbox" checked={allFilteredMessagesSelected} onChange={toggleSelectAllFilteredMessages} /></th>
                 <th style={th}>ID</th>
                 <th style={th}>Plan</th>
                 <th style={th}>Notification</th>
@@ -625,10 +965,11 @@ export default function PlansNotificationsTab({ profileId, groupId, entityName, 
               </tr>
             </thead>
             <tbody>
-              {messages.map((msg) => (
+              {pagedMessages.map((msg) => (
                 <tr key={msg.id} style={{ borderBottom: "1px solid var(--border-subtle)", verticalAlign: "top" }}>
                   {editingId === msg.id ? (
                     <>
+                      <td style={td}><input type="checkbox" checked={selectedMessageIds.includes(msg.id)} onChange={() => toggleSelectMessage(msg.id)} /></td>
                       <td style={td}><code style={{ fontSize: "0.7rem", opacity: 0.6 }}>{msg.id.slice(0, 8)}…</code></td>
                       <td style={td}>
                         <div style={{ fontWeight: 600, color: "var(--accent-primary)" }}>{msg.plan_title || "Unknown Plan"}</div>
@@ -659,6 +1000,7 @@ export default function PlansNotificationsTab({ profileId, groupId, entityName, 
                     </>
                   ) : (
                     <>
+                      <td style={td}><input type="checkbox" checked={selectedMessageIds.includes(msg.id)} onChange={() => toggleSelectMessage(msg.id)} /></td>
                       <td style={td}><code style={{ fontSize: "0.7rem", opacity: 0.6 }}>{msg.id.slice(0, 8)}…</code></td>
                       <td style={td}>
                         <div style={{ fontWeight: 600, color: "var(--accent-primary)" }}>{msg.plan_title || "Unknown Plan"}</div>
@@ -689,7 +1031,7 @@ export default function PlansNotificationsTab({ profileId, groupId, entityName, 
                       <td style={td}>
                         {canEditMessage(msg.status) && (
                           <div style={{ display: "flex", gap: "0.4rem" }}>
-                            <button className="btn btn-secondary btn-sm" onClick={() => startEdit(msg)} title="Edit">✏️</button>
+                            <button className="btn btn-secondary btn-sm" onClick={() => startEdit(msg)} title="Edit">Edit</button>
                             <button className="btn btn-danger btn-sm" onClick={() => deleteMsg(msg.id)} title="Delete">🗑️</button>
                           </div>
                         )}
@@ -700,6 +1042,14 @@ export default function PlansNotificationsTab({ profileId, groupId, entityName, 
               ))}
             </tbody>
           </table>
+        </div>
+      )}
+
+      {filteredMessages.length > 0 && (
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: "0.75rem" }}>
+          <button className="btn btn-secondary btn-sm" onClick={() => setMessagePage((p) => Math.max(1, p - 1))} disabled={currentMessagePage <= 1}>← Prev</button>
+          <div style={{ fontSize: "0.82rem", color: "var(--text-muted)" }}>Page {currentMessagePage} of {totalMessagePages}</div>
+          <button className="btn btn-secondary btn-sm" onClick={() => setMessagePage((p) => Math.min(totalMessagePages, p + 1))} disabled={currentMessagePage >= totalMessagePages}>Next →</button>
         </div>
       )}
     </div>

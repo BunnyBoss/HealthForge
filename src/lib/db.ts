@@ -52,6 +52,7 @@ function initSchema() {
       title TEXT,
       content TEXT NOT NULL,
       focus_areas TEXT DEFAULT '[]',
+      is_archived INTEGER DEFAULT 0,
       model_used TEXT,
       created_at DATETIME DEFAULT CURRENT_TIMESTAMP
     );
@@ -155,6 +156,13 @@ function initSchema() {
     // Column already exists
   }
 
+  // Add is_archived to health_plans if not exists
+  try {
+    db.exec(`ALTER TABLE health_plans ADD COLUMN is_archived INTEGER DEFAULT 0`);
+  } catch {
+    // Column already exists
+  }
+
   // Add admin_phone to user_settings if not exists
   try {
     db.exec(`ALTER TABLE user_settings ADD COLUMN admin_phone TEXT`);
@@ -203,6 +211,18 @@ function initSchema() {
 
   // Normalize legacy status naming.
   db.exec(`UPDATE queued_messages SET status = 'submitted' WHERE status = 'sent'`);
+  db.exec(`
+    UPDATE queued_messages
+    SET delivered_at = COALESCE(delivered_at, submitted_at, created_at, CURRENT_TIMESTAMP)
+    WHERE status IN ('delivered', 'read')
+      AND delivered_at IS NULL
+  `);
+  db.exec(`
+    UPDATE queued_messages
+    SET read_at = COALESCE(read_at, delivered_at, submitted_at, created_at, CURRENT_TIMESTAMP)
+    WHERE status = 'read'
+      AND read_at IS NULL
+  `);
 
   db.exec(`CREATE INDEX IF NOT EXISTS idx_queued_messages_wa_message_id ON queued_messages(wa_message_id)`);
 }

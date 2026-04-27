@@ -1,0 +1,82 @@
+flowchart LR
+  subgraph Files
+    AUTH[src/lib/auth.ts]
+    AI[src/lib/ai.ts]
+    DBINIT[src/lib/db.ts]
+    CHATAPI[src/app/api/chat/route.ts]
+    CHATSESS[src/app/api/chat/sessions/route.ts]
+    PROFILEAPI[src/app/api/profiles/route.ts]
+    PROFILEIDAPI[src/app/api/profiles/[id]/route.ts]
+    PLANAPI[src/app/api/plans/route.ts]
+    GROUPPLANAPI[src/app/api/groups/[id]/plan/route.ts]
+    MSGAPI[src/app/api/messages/route.ts]
+    MSGIDAPI[src/app/api/messages/[id]/route.ts]
+    SCHEDAPI[src/app/api/whatsapp/schedules/route.ts]
+    SCHEDIDAPI[src/app/api/whatsapp/schedules/[id]/route.ts]
+    SIGNUP[src/app/api/signup/route.ts]
+    WA[src/lib/whatsapp.ts]
+    SCH[src/lib/scheduler.ts]
+    SETTINGS[src/app/api/settings/route.ts]
+  end
+
+  subgraph Tables
+    USERS[(users)]
+    SETTINGS_T[(user_settings)]
+    PROFILES[(profiles)]
+    GROUPS[(profile_groups)]
+    GROUP_MEMBERS[(profile_group_members)]
+    PLANS[(health_plans)]
+    CHAT_SESS[(chat_sessions)]
+    CHAT_MSG[(chat_messages)]
+    QUEUE[(queued_messages)]
+    LEG_SCHED[(notification_schedules)]
+    WA_CFG[(whatsapp_config)]
+  end
+
+  AUTH -->|read| USERS
+  SIGNUP -->|insert| USERS
+  SIGNUP -->|insert| PROFILES
+
+  SETTINGS -->|read/write| SETTINGS_T
+  AI -->|read ai config| SETTINGS_T
+
+  PROFILEAPI -->|read/write| PROFILES
+  PROFILEIDAPI -->|read/update/delete| PROFILES
+
+  PLANAPI -->|read profile owner| PROFILES
+  PLANAPI -->|insert/read/delete| PLANS
+  GROUPPLANAPI -->|read| GROUPS
+  GROUPPLANAPI -->|read| GROUP_MEMBERS
+  GROUPPLANAPI -->|insert/read/delete| PLANS
+
+  CHATAPI -->|read| PROFILES
+  CHATAPI -->|read optional context| PLANS
+  CHATAPI -->|insert/update/read| CHAT_SESS
+  CHATAPI -->|insert/read| CHAT_MSG
+  CHATSESS -->|read| CHAT_SESS
+
+  MSGAPI -->|read user default country| SETTINGS_T
+  MSGAPI -->|validate plan owner| PLANS
+  MSGAPI -->|read profile owner| PROFILES
+  MSGAPI -->|read group owner| GROUPS
+  MSGAPI -->|insert/read/delete| QUEUE
+  MSGIDAPI -->|read user default country| SETTINGS_T
+  MSGIDAPI -->|update/delete| QUEUE
+
+  SCHEDAPI -->|insert/read| LEG_SCHED
+  SCHEDIDAPI -->|update/delete| LEG_SCHED
+
+  WA -->|read/update by wa_message_id| QUEUE
+  SCH -->|read due pending/update status| QUEUE
+
+  DBINIT -->|create/migrate| USERS
+  DBINIT -->|create/migrate| SETTINGS_T
+  DBINIT -->|create/migrate| PROFILES
+  DBINIT -->|create/migrate| GROUPS
+  DBINIT -->|create/migrate| GROUP_MEMBERS
+  DBINIT -->|create/migrate| PLANS
+  DBINIT -->|create/migrate| CHAT_SESS
+  DBINIT -->|create/migrate| CHAT_MSG
+  DBINIT -->|create/migrate| QUEUE
+  DBINIT -->|create/migrate| LEG_SCHED
+  DBINIT -->|create/migrate| WA_CFG

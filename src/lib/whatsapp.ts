@@ -3,6 +3,7 @@ import makeWASocket, {
   DisconnectReason,
   fetchLatestBaileysVersion,
   WASocket,
+  WAMessageStatus,
 } from "@whiskeysockets/baileys";
 import path from "path";
 import { Boom } from "@hapi/boom";
@@ -122,6 +123,26 @@ export async function initializeWhatsApp() {
         }
 
         if (receipt?.receiptTimestamp || (receipt?.deliveredDeviceJid && receipt.deliveredDeviceJid.length > 0)) {
+          promoteStatusForMessage(waMessageId, "delivered");
+        }
+      }
+    });
+
+    // For 1:1 chats, Baileys emits delivery/read in "messages.update" instead of
+    // "message-receipt.update", so listen to both channels.
+    sock.ev.on("messages.update", (updates) => {
+      for (const update of updates) {
+        const waMessageId = update.key?.id;
+        if (!waMessageId) continue;
+        const status = update.update?.status;
+        if (typeof status !== "number") continue;
+
+        if (status === WAMessageStatus.READ || status === WAMessageStatus.PLAYED) {
+          promoteStatusForMessage(waMessageId, "read");
+          continue;
+        }
+
+        if (status === WAMessageStatus.DELIVERY_ACK) {
           promoteStatusForMessage(waMessageId, "delivered");
         }
       }

@@ -336,3 +336,80 @@ ${planContent.substring(0, 4000)}
 IMPORTANT: Return ONLY a valid JSON array of exactly ${days} strings. No markdown, no explanation, just the raw JSON array.
 Example format: ["Message 1 text here", "Message 2 text here", ...]`;
 }
+
+export function buildPlanItemQueuePrompt(
+  planContent: string,
+  recipientName: string,
+  days: number,
+  customContext?: string
+): string {
+  return `You are a health plan scheduling assistant.
+
+Goal:
+- Read the health plan and extract ALL actionable plan items for the first ${days} day(s).
+- Generate WhatsApp-ready queue entries for ${recipientName}.
+
+Rules:
+- Include every actionable item (meals, workouts, hydration, medication reminders, sleep/wind-down, etc.) for day 1..${days}.
+- If a plan item has a time, preserve it.
+- If a plan item has no explicit time, assign a practical local time.
+- Keep each message concise (under 400 chars), clear, and specific about what to do at that time.
+- Use 24-hour HH:MM format for "time".
+- Return only unique and meaningful reminders (no duplicates).
+${customContext ? `\nAdditional context/instructions: ${customContext}` : ""}
+
+Health Plan:
+${planContent.substring(0, 5000)}
+
+Output format:
+Return ONLY valid JSON as an array of objects with this exact schema:
+[
+  { "day_offset": 0, "time": "07:30", "message_text": "..." },
+  { "day_offset": 0, "time": "12:45", "message_text": "..." }
+]
+
+Constraints:
+- day_offset is an integer from 0 to ${Math.max(0, days - 1)}.
+- time must be a valid HH:MM 24-hour string.
+- Do not include markdown or explanation outside the JSON array.`;
+}
+
+export function buildManualFrequencyQueuePrompt(
+  planContent: string,
+  recipientName: string,
+  days: number,
+  messagesPerDay: number,
+  customContext?: string
+): string {
+  const total = days * messagesPerDay;
+  return `You are a health coaching scheduler assistant.
+
+Goal:
+- Design exactly ${total} queued WhatsApp reminders for ${recipientName} over ${days} day(s).
+- Schedule exactly ${messagesPerDay} reminders per day.
+
+Rules:
+- Use the health plan as the source of tasks/advice.
+- Create reminders that are actionable, specific, and varied.
+- AI should choose the best timestamp for each reminder.
+- Use 24-hour HH:MM format for "time".
+- Keep message_text under 400 characters.
+${customContext ? `\nAdditional context/instructions: ${customContext}` : ""}
+
+Health Plan:
+${planContent.substring(0, 5000)}
+
+Output format:
+Return ONLY valid JSON as an array of objects with this exact schema:
+[
+  { "day_offset": 0, "time": "08:15", "message_text": "..." },
+  { "day_offset": 0, "time": "18:45", "message_text": "..." }
+]
+
+Constraints:
+- Exactly ${total} objects total.
+- Exactly ${messagesPerDay} objects for each day_offset.
+- day_offset must be an integer from 0 to ${Math.max(0, days - 1)}.
+- time must be a valid HH:MM 24-hour string.
+- Do not include markdown or explanation outside the JSON array.`;
+}
