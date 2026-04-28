@@ -23,7 +23,7 @@ async function checkStatus() {
     version,
     auth: state,
     printQRInTerminal: false,
-    logger: pino({ level: "silent" }) as any, // Silence the logs for status check
+    logger: pino({ level: "silent" }) as never, // Silence the logs for status check
   });
 
   sock.ev.on("connection.update", (update) => {
@@ -125,4 +125,3 @@ if (command === "status") {
   console.log("Available commands: login, status, logout");
   process.exit(1);
 }
-

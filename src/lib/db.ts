@@ -10,6 +10,7 @@ function getDb(): Database.Database {
     db = new Database(dbPath);
     db.pragma("journal_mode = WAL");
     db.pragma("foreign_keys = ON");
+    db.pragma("busy_timeout = 5000");
     initSchema();
   }
   return db;
@@ -22,6 +23,15 @@ function initSchema() {
       name TEXT NOT NULL,
       email TEXT UNIQUE NOT NULL,
       password_hash TEXT NOT NULL,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    );
+
+    CREATE TABLE IF NOT EXISTS auth_event_logs (
+      id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      event_type TEXT NOT NULL,
+      ip_address TEXT,
+      user_agent TEXT,
       created_at DATETIME DEFAULT CURRENT_TIMESTAMP
     );
 
@@ -245,6 +255,17 @@ function initSchema() {
   `);
 
   db.exec(`CREATE INDEX IF NOT EXISTS idx_queued_messages_wa_message_id ON queued_messages(wa_message_id)`);
+  db.exec(`CREATE INDEX IF NOT EXISTS idx_profiles_user_id ON profiles(user_id)`);
+  db.exec(`CREATE INDEX IF NOT EXISTS idx_profiles_user_archived ON profiles(user_id, is_archived)`);
+  db.exec(`CREATE INDEX IF NOT EXISTS idx_health_plans_profile_created ON health_plans(profile_id, created_at DESC)`);
+  db.exec(`CREATE INDEX IF NOT EXISTS idx_health_plans_group_created ON health_plans(group_id, created_at DESC)`);
+  db.exec(`CREATE INDEX IF NOT EXISTS idx_chat_sessions_user_profile_updated ON chat_sessions(user_id, profile_id, updated_at DESC)`);
+  db.exec(`CREATE INDEX IF NOT EXISTS idx_chat_sessions_user_group_updated ON chat_sessions(user_id, group_id, updated_at DESC)`);
+  db.exec(`CREATE INDEX IF NOT EXISTS idx_chat_messages_session_user_created ON chat_messages(session_id, user_id, created_at ASC)`);
+  db.exec(`CREATE INDEX IF NOT EXISTS idx_queued_messages_status_scheduled ON queued_messages(status, scheduled_for)`);
+  db.exec(`CREATE INDEX IF NOT EXISTS idx_queued_messages_user_profile_sched ON queued_messages(user_id, profile_id, scheduled_for)`);
+  db.exec(`CREATE INDEX IF NOT EXISTS idx_queued_messages_user_group_sched ON queued_messages(user_id, group_id, scheduled_for)`);
+  db.exec(`CREATE INDEX IF NOT EXISTS idx_auth_event_logs_user_created ON auth_event_logs(user_id, created_at DESC)`);
 }
 
 export default getDb;

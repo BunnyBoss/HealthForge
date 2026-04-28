@@ -11,6 +11,7 @@ function AppLayoutInner({ children }: { children: React.ReactNode }) {
   const router = useRouter();
   const pathname = usePathname();
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [loggingOut, setLoggingOut] = useState(false);
 
   useEffect(() => {
     if (status === "unauthenticated") {
@@ -45,6 +46,21 @@ function AppLayoutInner({ children }: { children: React.ReactNode }) {
     .join("")
     .toUpperCase()
     .slice(0, 2) || "?";
+
+  async function handleLogout() {
+    if (loggingOut) return;
+    setLoggingOut(true);
+    try {
+      await fetch("/api/auth/logout-log", {
+        method: "POST",
+        keepalive: true,
+      });
+    } catch {
+      // Best-effort log only.
+    } finally {
+      await signOut({ callbackUrl: "/login" });
+    }
+  }
 
   return (
     <div className="app-layout">
@@ -83,14 +99,22 @@ function AppLayoutInner({ children }: { children: React.ReactNode }) {
         </nav>
 
         <div className="sidebar-footer">
-          <div className="sidebar-user" onClick={() => signOut({ callbackUrl: "/login" })}>
+          <div className="sidebar-user">
             <div className="sidebar-avatar">{initials}</div>
             <div className="sidebar-user-info">
               <div className="name">{session.user.name}</div>
               <div className="email">{session.user.email}</div>
             </div>
-            <span style={{ fontSize: "0.85rem", color: "var(--text-muted)" }}>🚪</span>
           </div>
+          <button
+            type="button"
+            className="btn btn-secondary btn-full btn-sm"
+            onClick={handleLogout}
+            disabled={loggingOut}
+            style={{ marginTop: "0.6rem" }}
+          >
+            {loggingOut ? "Signing out..." : "🚪 Logout"}
+          </button>
         </div>
       </aside>
 

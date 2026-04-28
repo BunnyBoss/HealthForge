@@ -39,17 +39,34 @@ export async function POST(req: NextRequest) {
 
   try {
     const { name, description, group_type, group_goals, member_ids } = await req.json();
+    const normalizedName = typeof name === "string" ? name.trim() : "";
 
-    if (!name?.trim()) {
+    if (!normalizedName) {
       return NextResponse.json({ error: "Group name is required" }, { status: 400 });
     }
 
-    if (!member_ids?.length || member_ids.length < 2) {
+    if (normalizedName.length > 120) {
+      return NextResponse.json({ error: "Group name must be 120 characters or less" }, { status: 400 });
+    }
+
+    const requestedMemberIds = Array.isArray(member_ids)
+      ? Array.from(new Set(member_ids.filter((memberId: unknown): memberId is string => typeof memberId === "string")))
+      : [];
+
+    if (requestedMemberIds.length < 2) {
       return NextResponse.json({ error: "At least 2 members required" }, { status: 400 });
     }
 
     const db = getDb();
     const groupId = uuidv4();
+    const placeholders = requestedMemberIds.map(() => "?").join(",");
+    const validMembers = db
+      .prepare(`SELECT id FROM profiles WHERE user_id = ? AND id IN (${placeholders})`)
+      .all(session.user.id, ...requestedMemberIds) as { id: string }[];
+
+    if (validMembers.length < 2) {
+      return NextResponse.json({ error: "At least 2 valid members required" }, { status: 400 });
+    }
 
     db.prepare(`
       INSERT INTO profile_groups (id, user_id, name, description, group_type, group_goals)
@@ -57,7 +74,7 @@ export async function POST(req: NextRequest) {
     `).run(
       groupId,
       session.user.id,
-      name.trim(),
+      normalizedName,
       description || "",
       group_type || "custom",
       JSON.stringify(group_goals || [])
@@ -67,14 +84,8 @@ export async function POST(req: NextRequest) {
     const insertMember = db.prepare(
       "INSERT INTO profile_group_members (group_id, profile_id) VALUES (?, ?)"
     );
-    for (const profileId of member_ids) {
-      // Verify profile belongs to user
-      const profile = db
-        .prepare("SELECT id FROM profiles WHERE id = ? AND user_id = ?")
-        .get(profileId, session.user.id);
-      if (profile) {
-        insertMember.run(groupId, profileId);
-      }
+    for (const profile of validMembers) {
+      insertMember.run(groupId, profile.id);
     }
 
     return NextResponse.json({ id: groupId, name, group_type });

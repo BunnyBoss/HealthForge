@@ -6,17 +6,41 @@ import getDb from "@/lib/db";
 export async function POST(req: NextRequest) {
   try {
     const { name, email, password } = await req.json();
+    const normalizedName = typeof name === "string" ? name.trim() : "";
+    const normalizedEmail = typeof email === "string" ? email.trim().toLowerCase() : "";
+    const normalizedPassword = typeof password === "string" ? password : "";
 
-    if (!name || !email || !password) {
+    if (!normalizedName || !normalizedEmail || !normalizedPassword) {
       return NextResponse.json(
         { error: "Name, email, and password are required" },
         { status: 400 }
       );
     }
 
-    if (password.length < 6) {
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(normalizedEmail)) {
       return NextResponse.json(
-        { error: "Password must be at least 6 characters" },
+        { error: "Please enter a valid email address" },
+        { status: 400 }
+      );
+    }
+
+    if (normalizedName.length < 2 || normalizedName.length > 120) {
+      return NextResponse.json(
+        { error: "Name must be between 2 and 120 characters" },
+        { status: 400 }
+      );
+    }
+
+    if (normalizedPassword.length < 8) {
+      return NextResponse.json(
+        { error: "Password must be at least 8 characters" },
+        { status: 400 }
+      );
+    }
+
+    if (!/[A-Za-z]/.test(normalizedPassword) || !/\d/.test(normalizedPassword)) {
+      return NextResponse.json(
+        { error: "Password must include at least one letter and one number" },
         { status: 400 }
       );
     }
@@ -25,7 +49,7 @@ export async function POST(req: NextRequest) {
 
     const existing = db
       .prepare("SELECT id FROM users WHERE email = ?")
-      .get(email);
+      .get(normalizedEmail);
     if (existing) {
       return NextResponse.json(
         { error: "An account with this email already exists" },
@@ -34,17 +58,17 @@ export async function POST(req: NextRequest) {
     }
 
     const userId = uuidv4();
-    const passwordHash = await hash(password, 12);
+    const passwordHash = await hash(normalizedPassword, 12);
 
     db.prepare(
       "INSERT INTO users (id, name, email, password_hash) VALUES (?, ?, ?, ?)"
-    ).run(userId, name, email, passwordHash);
+    ).run(userId, normalizedName, normalizedEmail, passwordHash);
 
     // Auto-create a "Self" profile
     const profileId = uuidv4();
     db.prepare(
       "INSERT INTO profiles (id, user_id, name, relationship) VALUES (?, ?, ?, ?)"
-    ).run(profileId, userId, name, "self");
+    ).run(profileId, userId, normalizedName, "self");
 
     return NextResponse.json(
       { message: "Account created successfully", userId },

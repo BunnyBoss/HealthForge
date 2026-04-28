@@ -19,6 +19,16 @@ HealthForge helps you:
 - Baileys (WhatsApp Web integration)
 - node-cron (background queue worker)
 
+## Environment Variables
+
+Copy `.env.example` to `.env.local` and set values for your environment.
+
+- `NEXTAUTH_SECRET`: required in production; use a long random value
+- `NEXTAUTH_URL`: app base URL (`http://localhost:3000` in local)
+- `LITELLM_API_URL`: OpenAI-compatible endpoint for generation/chat
+- `LITELLM_API_KEY`: optional key for LLM endpoint
+- `DEFAULT_MODEL`: default model used by AI routes/settings
+
 ## Project Structure
 
 ```text
@@ -53,6 +63,7 @@ npm install
 ```
 
 2. Create/update local env file (`.env.local`) with auth/app values used by NextAuth.
+   You can start from `.env.example`.
 
 3. Start dev server:
 
@@ -67,6 +78,15 @@ npm run dev
 ```bash
 npm run build
 npm run start
+```
+
+## Quality Gates
+
+```bash
+npm run lint
+npm run typecheck
+npm run build
+npm run check
 ```
 
 ## Core Usage Flow
@@ -124,7 +144,7 @@ npx tsx scripts/test-notification.ts <phone> <YYYY-MM-DDTHH:mm> '<message>'
 
 - Background worker starts at app boot via `src/instrumentation.ts`
 - It checks queued messages every minute
-- Due messages (`scheduled_for <= now`) are sent and marked `sent`/`failed`
+- Due messages (`scheduled_for <= now`) are sent and marked `submitted`/`failed`
 
 ## Key API Routes
 
@@ -139,6 +159,15 @@ npx tsx scripts/test-notification.ts <phone> <YYYY-MM-DDTHH:mm> '<message>'
 - SQLite schema auto-initializes in `src/lib/db.ts`
 - Existing DB migrations are additive (`ALTER TABLE ...` wrapped in `try/catch`)
 - Use a non-primary WhatsApp account for automation to reduce account-risk exposure
+- In production, set a strong `NEXTAUTH_SECRET` and point `NEXTAUTH_URL` to the deployed HTTPS domain.
+
+## Production Checklist
+
+1. Set production env values (`NEXTAUTH_SECRET`, `NEXTAUTH_URL`, LLM URL/key/model).
+2. Run `npm run check` in CI before deploy.
+3. Run behind HTTPS reverse proxy.
+4. Persist and back up `healthforge.db` and `wa_auth/`.
+5. Run a single scheduler instance to avoid duplicate message sends.
 
 ## Troubleshooting
 
@@ -147,4 +176,3 @@ npx tsx scripts/test-notification.ts <phone> <YYYY-MM-DDTHH:mm> '<message>'
   - `scheduled_for` is in the past/current time
   - app server is running (scheduler active)
 - If AI generation fails, check API URL/key/model in Settings.
-

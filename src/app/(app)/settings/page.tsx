@@ -7,6 +7,8 @@ import { COUNTRY_OPTIONS, normalizeCountryIso, type CountryIso } from "@/lib/pho
 export default function SettingsPage() {
   const [apiUrl, setApiUrl] = useState("");
   const [apiKey, setApiKey] = useState("");
+  const [hasApiKey, setHasApiKey] = useState(false);
+  const [clearApiKey, setClearApiKey] = useState(false);
   const [model, setModel] = useState("");
   const [adminPhone, setAdminPhone] = useState("");
   const [defaultCountryIso, setDefaultCountryIso] = useState<CountryIso>("IN");
@@ -20,7 +22,8 @@ export default function SettingsPage() {
     fetch("/api/settings").then((r) => r.json())
       .then((settings) => {
         setApiUrl(settings.api_url || "http://localhost:4000");
-        setApiKey(settings.api_key || "");
+        setApiKey("");
+        setHasApiKey(Boolean(settings.has_api_key));
         setModel(settings.preferred_model || "qwen3.5:9b");
         setAdminPhone(settings.admin_phone || "");
         const defaultCountry = normalizeCountryIso(settings.default_country_iso);
@@ -40,12 +43,24 @@ export default function SettingsPage() {
         body: JSON.stringify({ 
           api_url: apiUrl, 
           api_key: apiKey, 
+          clear_api_key: clearApiKey,
           preferred_model: model,
           admin_phone: adminPhone,
           default_country_iso: defaultCountryIso,
         }),
       });
-      setMessage(res.ok ? "Settings saved successfully!" : "Failed to save settings");
+      if (res.ok) {
+        setMessage("Settings saved successfully!");
+        if (clearApiKey) {
+          setHasApiKey(false);
+          setClearApiKey(false);
+        } else if (apiKey.trim()) {
+          setHasApiKey(true);
+          setApiKey("");
+        }
+      } else {
+        setMessage("Failed to save settings");
+      }
     } catch {
       setMessage("Error saving settings");
     } finally {
@@ -97,7 +112,28 @@ export default function SettingsPage() {
             </div>
             <div className="form-group">
               <label className="form-label">API Key (Optional)</label>
-              <input className="form-input" type="password" value={apiKey} onChange={(e) => setApiKey(e.target.value)} placeholder="sk-... or leave empty" />
+              <input
+                className="form-input"
+                type="password"
+                value={apiKey}
+                onChange={(e) => setApiKey(e.target.value)}
+                placeholder={hasApiKey ? "Leave blank to keep existing key, or enter a new one" : "sk-... or leave empty"}
+              />
+              <div style={{ display: "flex", gap: "0.5rem", alignItems: "center", marginTop: "0.5rem", flexWrap: "wrap" }}>
+                <span style={{ fontSize: "0.8rem", color: "var(--text-muted)" }}>
+                  Stored key: {hasApiKey ? "Configured" : "Not set"}
+                </span>
+                {hasApiKey && (
+                  <label style={{ display: "inline-flex", alignItems: "center", gap: "0.35rem", fontSize: "0.8rem", color: "var(--text-muted)" }}>
+                    <input
+                      type="checkbox"
+                      checked={clearApiKey}
+                      onChange={(e) => setClearApiKey(e.target.checked)}
+                    />
+                    Clear stored key on save
+                  </label>
+                )}
+              </div>
             </div>
             <div className="form-group">
               <label className="form-label">Model Name</label>

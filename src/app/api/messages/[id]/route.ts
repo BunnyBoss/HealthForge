@@ -27,6 +27,13 @@ export async function PUT(
     return NextResponse.json({ error: "Delivered or read messages cannot be edited." }, { status: 409 });
   }
 
+  if (scheduled_for !== undefined && scheduled_for !== null) {
+    const parsed = new Date(String(scheduled_for));
+    if (Number.isNaN(parsed.getTime())) {
+      return NextResponse.json({ error: "scheduled_for must be a valid datetime" }, { status: 400 });
+    }
+  }
+
   let normalizedTargetPhone: string | null = null;
   if (typeof target_phone === "string" && target_phone.trim()) {
     const settings = db

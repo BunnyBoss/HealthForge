@@ -37,6 +37,15 @@ export async function POST(req: NextRequest) {
 
   try {
     const body = await req.json();
+    const normalizedName = typeof body?.name === "string" ? body.name.trim() : "";
+    if (!normalizedName) {
+      return NextResponse.json({ error: "Profile name is required" }, { status: 400 });
+    }
+
+    if (normalizedName.length > 120) {
+      return NextResponse.json({ error: "Profile name must be 120 characters or less" }, { status: 400 });
+    }
+
     const db = getDb();
     const id = uuidv4();
     const settings = db
@@ -60,7 +69,7 @@ export async function POST(req: NextRequest) {
     `).run(
       id,
       session.user.id,
-      body.name,
+      normalizedName,
       body.relationship || "other",
       body.age || null,
       body.gender || null,

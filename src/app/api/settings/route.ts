@@ -13,17 +13,28 @@ export async function GET() {
   const db = getDb();
   const settings = db
     .prepare("SELECT * FROM user_settings WHERE user_id = ?")
-    .get(session.user.id) as Record<string, unknown> | undefined;
+    .get(session.user.id) as {
+      api_url?: string | null;
+      api_key?: string | null;
+      preferred_model?: string | null;
+      admin_phone?: string | null;
+      default_country_iso?: string | null;
+    } | undefined;
 
   return NextResponse.json(
     settings
       ? {
-        ...settings,
+        api_url: settings.api_url || "",
+        api_key: "",
+        has_api_key: Boolean(settings.api_key),
+        preferred_model: settings.preferred_model || "",
+        admin_phone: settings.admin_phone || "",
         default_country_iso: normalizeCountryIso(settings.default_country_iso as string | undefined),
       }
       : {
         api_url: process.env.LITELLM_API_URL || "http://localhost:4000",
         api_key: "",
+        has_api_key: false,
         preferred_model: process.env.DEFAULT_MODEL || "gpt-4o",
         admin_phone: "",
         default_country_iso: "IN",
@@ -39,8 +50,42 @@ export async function PUT(req: NextRequest) {
   }
 
   try {
-    const { api_url, api_key, preferred_model, admin_phone, default_country_iso } = await req.json();
+    const { api_url, api_key, preferred_model, admin_phone, default_country_iso, clear_api_key } = await req.json();
     const db = getDb();
+    const existing = db
+      .prepare("SELECT api_key FROM user_settings WHERE user_id = ?")
+      .get(session.user.id) as { api_key?: string | null } | undefined;
+
+    let normalizedApiUrl: string | null = null;
+    if (typeof api_url === "string" && api_url.trim()) {
+      const trimmed = api_url.trim();
+      try {
+        const parsed = new URL(trimmed);
+        if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+          return NextResponse.json({ error: "api_url must start with http:// or https://" }, { status: 400 });
+        }
+        normalizedApiUrl = trimmed;
+      } catch {
+        return NextResponse.json({ error: "api_url is not a valid URL" }, { status: 400 });
+      }
+    }
+
+    const normalizedModel = typeof preferred_model === "string" && preferred_model.trim()
+      ? preferred_model.trim().slice(0, 120)
+      : null;
+
+    let normalizedApiKey: string | null = existing?.api_key || null;
+    if (typeof api_key === "string") {
+      const trimmed = api_key.trim();
+      if (trimmed) {
+        normalizedApiKey = trimmed;
+      } else if (clear_api_key) {
+        normalizedApiKey = null;
+      }
+    } else if (clear_api_key) {
+      normalizedApiKey = null;
+    }
+
     const normalizedDefaultCountry = normalizeCountryIso(default_country_iso);
 
     let normalizedAdminPhone: string | null = null;
@@ -64,9 +109,9 @@ export async function PUT(req: NextRequest) {
         updated_at = CURRENT_TIMESTAMP
     `).run(
       session.user.id,
-      api_url || null,
-      api_key || null,
-      preferred_model || null,
+      normalizedApiUrl,
+      normalizedApiKey,
+      normalizedModel,
       normalizedAdminPhone,
       normalizedDefaultCountry
     );

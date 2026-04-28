@@ -7,6 +7,13 @@ import { COUNTRY_OPTIONS, normalizeCountryIso, normalizePhoneNumber } from "../s
 
 const AUTH_DIR = path.resolve(process.cwd(), "wa_auth");
 
+interface PendingQueuedMessageRow {
+  id: string;
+  target_phone: string;
+  cc_phone: string | null;
+  message_text: string;
+}
+
 function parseCountryArg(args: string[]): { country: string; rest: string[] } {
   const cloned = [...args];
   let country = "IN";
@@ -52,7 +59,7 @@ async function sendTestNotification(phone: string, message: string, countryIso: 
     version,
     auth: state,
     printQRInTerminal: false,
-    logger: pino({ level: "silent" }) as any,
+    logger: pino({ level: "silent" }) as never,
   });
 
   sock.ev.on("creds.update", saveCreds);
@@ -91,7 +98,7 @@ async function flushPending() {
     WHERE status = 'pending'
       AND datetime(scheduled_for) <= datetime('now')
     ORDER BY datetime(scheduled_for) ASC
-  `).all() as Array<Record<string, any>>;
+  `).all() as PendingQueuedMessageRow[];
 
   const dueFailedCount = db.prepare(`
     SELECT COUNT(*) AS count
@@ -118,7 +125,7 @@ async function flushPending() {
     version,
     auth: state,
     printQRInTerminal: false,
-    logger: pino({ level: "silent" }) as any,
+    logger: pino({ level: "silent" }) as never,
   });
   sock.ev.on("creds.update", saveCreds);
 

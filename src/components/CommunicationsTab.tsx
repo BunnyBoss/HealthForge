@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState, type CSSProperties } from "react";
+import { useCallback, useEffect, useMemo, useState, type CSSProperties } from "react";
 import { COUNTRY_OPTIONS, normalizeCountryIso, type CountryIso } from "@/lib/phone";
 import PlanDocument from "@/components/PlanDocument";
 
@@ -168,12 +168,12 @@ export default function PlansNotificationsTab({ profileId, groupId, entityName, 
   const queryParam = profileId ? `profile_id=${profileId}` : `group_id=${groupId}`;
   const planApiPath = profileId ? `/api/plans?profileId=${profileId}` : `/api/groups/${groupId}/plan`;
 
-  async function fetchMessages() {
+  const fetchMessages = useCallback(async () => {
     const msgs = await fetch(`/api/messages?${queryParam}`).then((r) => r.json());
     setMessages(Array.isArray(msgs) ? msgs : []);
-  }
+  }, [queryParam]);
 
-  async function refreshAll() {
+  const refreshAll = useCallback(async () => {
     setLoading(true);
     try {
       const [plansData, msgs, settings, profile] = await Promise.all([
@@ -212,11 +212,11 @@ export default function PlansNotificationsTab({ profileId, groupId, entityName, 
     } finally {
       setLoading(false);
     }
-  }
+  }, [groupId, planApiPath, profileId, queryParam]);
 
   useEffect(() => {
     refreshAll().catch(() => setLoading(false));
-  }, [queryParam, planApiPath]);
+  }, [refreshAll]);
 
   useEffect(() => {
     const timer = setInterval(() => {
@@ -225,7 +225,7 @@ export default function PlansNotificationsTab({ profileId, groupId, entityName, 
       });
     }, 10000);
     return () => clearInterval(timer);
-  }, [queryParam]);
+  }, [fetchMessages]);
 
   const selectedPlan = plans.find((p) => p.id === selectedPlanId) ?? plans[0] ?? null;
   const openPlan = plans.find((p) => p.id === openPlanId) || null;

@@ -56,6 +56,9 @@ export async function GET(req: NextRequest) {
   const { searchParams } = new URL(req.url);
   const profileId = searchParams.get("profile_id");
   const groupId = searchParams.get("group_id");
+  if (profileId && groupId) {
+    return NextResponse.json({ error: "Provide only one of profile_id or group_id" }, { status: 400 });
+  }
 
   const db = getDb();
   let query = `
@@ -101,6 +104,10 @@ export async function POST(req: NextRequest) {
       target_country_iso,
       cc_country_iso,
     } = await req.json();
+
+    if ((profile_id && group_id) || (!profile_id && !group_id)) {
+      return NextResponse.json({ error: "Provide exactly one of profile_id or group_id" }, { status: 400 });
+    }
 
     if (!plan_content) {
       return NextResponse.json({ error: "plan_content is required" }, { status: 400 });
@@ -196,6 +203,23 @@ export async function POST(req: NextRequest) {
     }
 
     const db = getDb();
+    if (profile_id) {
+      const ownedProfile = db
+        .prepare("SELECT id FROM profiles WHERE id = ? AND user_id = ?")
+        .get(profile_id, session.user.id);
+      if (!ownedProfile) {
+        return NextResponse.json({ error: "Profile not found" }, { status: 404 });
+      }
+    }
+    if (group_id) {
+      const ownedGroup = db
+        .prepare("SELECT id FROM profile_groups WHERE id = ? AND user_id = ?")
+        .get(group_id, session.user.id);
+      if (!ownedGroup) {
+        return NextResponse.json({ error: "Group not found" }, { status: 404 });
+      }
+    }
+
     const settings = db
       .prepare("SELECT default_country_iso FROM user_settings WHERE user_id = ?")
       .get(session.user.id) as { default_country_iso?: string | null } | undefined;
@@ -315,6 +339,9 @@ export async function DELETE(req: NextRequest) {
   const { searchParams } = new URL(req.url);
   const profileId = searchParams.get("profile_id");
   const groupId = searchParams.get("group_id");
+  if (profileId && groupId) {
+    return NextResponse.json({ error: "Provide only one of profile_id or group_id" }, { status: 400 });
+  }
 
   const db = getDb();
   if (profileId) {

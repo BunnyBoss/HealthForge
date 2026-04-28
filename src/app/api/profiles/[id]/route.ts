@@ -46,6 +46,14 @@ export async function PUT(
 
   try {
     const body = await req.json();
+    const normalizedName = typeof body?.name === "string" ? body.name.trim() : "";
+    if (!normalizedName) {
+      return NextResponse.json({ error: "Profile name is required" }, { status: 400 });
+    }
+    if (normalizedName.length > 120) {
+      return NextResponse.json({ error: "Profile name must be 120 characters or less" }, { status: 400 });
+    }
+
     const db = getDb();
 
     // Verify ownership
@@ -77,7 +85,7 @@ export async function PUT(
         medications = ?, goals = ?, additional_notes = ?, phone_number = ?, updated_at = CURRENT_TIMESTAMP
       WHERE id = ? AND user_id = ?
     `).run(
-      body.name,
+      normalizedName,
       body.relationship || "other",
       body.age || null,
       body.gender || null,

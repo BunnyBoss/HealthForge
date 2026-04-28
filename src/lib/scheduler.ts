@@ -5,6 +5,14 @@ import { sendWhatsAppMessage, isConnected, initializeWhatsApp } from "@/lib/what
 let mainTask: ReturnType<typeof cron.schedule> | null = null;
 let isExecuting = false;
 
+interface PendingQueuedMessage {
+  id: string;
+  profile_id: string | null;
+  target_phone: string;
+  cc_phone: string | null;
+  message_text: string;
+}
+
 async function processQueue() {
   if (isExecuting) return;
   isExecuting = true;
@@ -18,7 +26,7 @@ async function processQueue() {
           AND datetime(scheduled_for) <= datetime('now')
         ORDER BY datetime(scheduled_for) ASC
       `)
-      .all() as any[];
+      .all() as PendingQueuedMessage[];
 
     if (pendingMessages.length === 0) {
       isExecuting = false;
