@@ -39,13 +39,13 @@ export async function PUT(req: NextRequest) {
   }
 
   try {
-    const { api_url, api_key, preferred_model, admin_phone, default_country_iso, admin_country_iso } = await req.json();
+    const { api_url, api_key, preferred_model, admin_phone, default_country_iso } = await req.json();
     const db = getDb();
     const normalizedDefaultCountry = normalizeCountryIso(default_country_iso);
 
     let normalizedAdminPhone: string | null = null;
     if (typeof admin_phone === "string" && admin_phone.trim()) {
-      const normalized = normalizePhoneNumber(admin_phone, admin_country_iso || normalizedDefaultCountry);
+      const normalized = normalizePhoneNumber(admin_phone, normalizedDefaultCountry);
       if (!normalized.ok) {
         return NextResponse.json({ error: `Invalid admin phone: ${normalized.error}` }, { status: 400 });
       }

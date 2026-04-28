@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useState, type CSSProperties } from "react";
 import { COUNTRY_OPTIONS, normalizeCountryIso, type CountryIso } from "@/lib/phone";
+import PlanDocument from "@/components/PlanDocument";
 
 interface Plan {
   id: string;
@@ -44,9 +45,25 @@ interface Props {
   onOpenChatWithPlan?: (plan: { id: string; title: string }) => void;
 }
 
+interface ContactTarget {
+  id: string;
+  label: string;
+  phone: string;
+}
+
 type PlanSortKey = "created_at" | "title" | "plan_type" | "model_used";
 type MessageSortKey = "scheduled_for" | "status" | "plan_title" | "target_phone" | "created_at";
-type GenerationMode = "ai_plan" | "manual_frequency";
+
+const FOCUS_AREAS = [
+  "🍽️ Diet & Nutrition",
+  "🏋️ Exercise & Fitness",
+  "😴 Sleep & Recovery",
+  "🧘 Stress Management",
+  "💊 Supplements",
+  "💧 Hydration",
+  "🧠 Mental Wellness",
+  "❤️ Heart Health",
+];
 
 const QUEUE_STATUS_OPTIONS: QueueStatus[] = [
   "pending",
@@ -80,6 +97,9 @@ export default function PlansNotificationsTab({ profileId, groupId, entityName, 
   const [messages, setMessages] = useState<QueuedMessage[]>([]);
   const [loading, setLoading] = useState(true);
   const [adminPhone, setAdminPhone] = useState("");
+  const [profilePhone, setProfilePhone] = useState("");
+  const [groupPhones, setGroupPhones] = useState<ContactTarget[]>([]);
+  const [selectedGroupPhones, setSelectedGroupPhones] = useState<string[]>([]);
   const [defaultCountryIso, setDefaultCountryIso] = useState<CountryIso>("IN");
 
   // Plan table tools
@@ -108,9 +128,12 @@ export default function PlansNotificationsTab({ profileId, groupId, entityName, 
   const [targetPhone, setTargetPhone] = useState("");
   const [targetCountryIso, setTargetCountryIso] = useState<CountryIso>("IN");
   const [ccSelf, setCcSelf] = useState(false);
-  const [generationMode, setGenerationMode] = useState<GenerationMode>("ai_plan");
+  const [daysMode, setDaysMode] = useState<"auto" | "manual">("auto");
   const [days, setDays] = useState(7);
+  const [frequencyMode, setFrequencyMode] = useState<"auto" | "manual">("auto");
   const [messagesPerDay, setMessagesPerDay] = useState(3);
+  const [startDate, setStartDate] = useState(() => new Date().toISOString().slice(0, 10));
+  const [notificationFocusAreas, setNotificationFocusAreas] = useState<string[]>([]);
   const [customContext, setCustomContext] = useState("");
   const [generating, setGenerating] = useState(false);
   const [genError, setGenError] = useState("");
@@ -153,10 +176,11 @@ export default function PlansNotificationsTab({ profileId, groupId, entityName, 
   async function refreshAll() {
     setLoading(true);
     try {
-      const [plansData, msgs, settings] = await Promise.all([
+      const [plansData, msgs, settings, profile] = await Promise.all([
         fetch(planApiPath).then((r) => r.json()),
         fetch(`/api/messages?${queryParam}`).then((r) => r.json()),
         fetch("/api/settings").then((r) => r.json()),
+        profileId ? fetch(`/api/profiles/${profileId}`).then((r) => r.json()).catch(() => null) : Promise.resolve(null),
       ]);
       setPlans(Array.isArray(plansData) ? plansData : []);
       setMessages(Array.isArray(msgs) ? msgs : []);
@@ -165,6 +189,26 @@ export default function PlansNotificationsTab({ profileId, groupId, entityName, 
       setDefaultCountryIso(normalizedCountry);
       setTargetCountryIso(normalizedCountry);
       setEditCountryIso(normalizedCountry);
+      const nextProfilePhone = profile && typeof profile.phone_number === "string" ? profile.phone_number : "";
+      setProfilePhone(nextProfilePhone);
+      setTargetPhone((current) => current || nextProfilePhone);
+      if (groupId) {
+        const group = await fetch(`/api/groups/${groupId}`).then((r) => r.json()).catch(() => null);
+        const phones = Array.isArray(group?.members)
+          ? group.members
+            .filter((member: { id?: string; name?: string; phone_number?: string | null }) => typeof member.phone_number === "string" && member.phone_number)
+            .map((member: { id: string; name: string; phone_number: string }) => ({
+              id: member.id,
+              label: member.name,
+              phone: member.phone_number,
+            }))
+          : [];
+        setGroupPhones(phones);
+        setSelectedGroupPhones(phones.map((phone: ContactTarget) => phone.phone));
+      } else {
+        setGroupPhones([]);
+        setSelectedGroupPhones([]);
+      }
     } finally {
       setLoading(false);
     }
@@ -185,6 +229,18 @@ export default function PlansNotificationsTab({ profileId, groupId, entityName, 
 
   const selectedPlan = plans.find((p) => p.id === selectedPlanId) ?? plans[0] ?? null;
   const openPlan = plans.find((p) => p.id === openPlanId) || null;
+
+  function toggleNotificationFocus(area: string) {
+    setNotificationFocusAreas((prev) =>
+      prev.includes(area) ? prev.filter((value) => value !== area) : [...prev, area]
+    );
+  }
+
+  function toggleGroupPhone(phone: string) {
+    setSelectedGroupPhones((prev) =>
+      prev.includes(phone) ? prev.filter((value) => value !== phone) : [...prev, phone]
+    );
+  }
 
   const filteredPlans = useMemo(() => {
     const q = planSearch.trim().toLowerCase();
@@ -286,16 +342,21 @@ export default function PlansNotificationsTab({ profileId, groupId, entityName, 
           profile_id: profileId ?? null,
           group_id: groupId ?? null,
           target_phone: targetPhone.trim(),
+          target_phones: groupId ? selectedGroupPhones : undefined,
           target_country_iso: targetCountryIso,
           cc_phone: ccSelf && adminPhone ? adminPhone : null,
           cc_country_iso: defaultCountryIso,
-          days,
-          generation_mode: generationMode,
-          messages_per_day: generationMode === "manual_frequency" ? messagesPerDay : undefined,
+          days_mode: daysMode,
+          days: daysMode === "manual" ? days : undefined,
+          frequency_mode: frequencyMode,
+          messages_per_day: frequencyMode === "manual" ? messagesPerDay : undefined,
+          start_date: startDate,
+          focus_areas: notificationFocusAreas,
           custom_context: customContext || null,
           recipient_name: entityName,
           plan_content: selectedPlan.content,
           plan_id: selectedPlan.id,
+          plan_title: selectedPlan.title,
         }),
       });
       const data = await res.json();
@@ -304,12 +365,15 @@ export default function PlansNotificationsTab({ profileId, groupId, entityName, 
         return;
       }
       await fetchMessages();
-      const modeLabel = data.mode === "ai_plan" ? "AI mode" : "Manual mode";
-      setGenSuccess(`Queued ${data.created || 0} notification(s) using ${modeLabel}.`);
+      setGenSuccess(`Queued ${data.created || 0} AI-generated notification(s) starting on ${startDate}.`);
       setShowForm(false);
-      setTargetPhone("");
+      setTargetPhone(profilePhone);
+      setDaysMode("auto");
       setDays(7);
+      setFrequencyMode("auto");
       setMessagesPerDay(3);
+      setStartDate(new Date().toISOString().slice(0, 10));
+      setNotificationFocusAreas([]);
       setCustomContext("");
       setCcSelf(false);
     } catch {
@@ -761,13 +825,15 @@ export default function PlansNotificationsTab({ profileId, groupId, entityName, 
 
       {openPlan && (
         <div className="health-info-card" style={{ marginBottom: "2rem" }}>
-          <div style={{ display: "flex", justifyContent: "space-between", gap: "0.75rem", flexWrap: "wrap", marginBottom: "0.75rem" }}>
-            <h3 style={{ margin: 0 }}>📄 {openPlan.title}</h3>
-            <div style={{ fontSize: "0.75rem", color: "var(--text-muted)" }}>
-              {openPlan.plan_type} · {new Date(openPlan.created_at).toLocaleString()} · {openPlan.model_used}
-            </div>
-          </div>
-          <pre style={{ whiteSpace: "pre-wrap", margin: 0, lineHeight: 1.5, fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace", fontSize: "0.84rem", color: "var(--text-primary)" }}>{openPlan.content}</pre>
+          <PlanDocument
+            title={openPlan.title}
+            content={openPlan.content}
+            createdAt={openPlan.created_at}
+            modelUsed={openPlan.model_used}
+            planType={openPlan.plan_type}
+            focusAreas={openPlan.focus_areas}
+            planId={openPlan.id}
+          />
         </div>
       )}
 
@@ -821,53 +887,99 @@ export default function PlansNotificationsTab({ profileId, groupId, entityName, 
           <form onSubmit={generate}>
             <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(190px, 1fr))", gap: "0.75rem" }}>
               <div className="form-group">
-                <label className="form-label">Generation Mode</label>
-                <select
-                  className="form-select"
-                  value={generationMode}
-                  onChange={(e) => {
-                    setGenerationMode(e.target.value as GenerationMode);
-                    setGenError("");
-                  }}
-                >
-                  <option value="ai_plan">AI (From Plan Items)</option>
-                  <option value="manual_frequency">Manual (Days + Frequency)</option>
-                </select>
-              </div>
-              <div className="form-group">
                 <label className="form-label">Based on Plan</label>
                 <select className="form-select" value={selectedPlanId} onChange={(e) => setSelectedPlanId(e.target.value)}>
                   {plans.map((p) => <option key={p.id} value={p.id}>{p.title} ({new Date(p.created_at).toLocaleDateString()})</option>)}
                 </select>
               </div>
               <div className="form-group">
-                <label className="form-label">Target Country</label>
+                <label className="form-label">{groupId ? "Phone Country Default" : "Target Country"}</label>
                 <select className="form-select" value={targetCountryIso} onChange={(e) => setTargetCountryIso(normalizeCountryIso(e.target.value))}>
                   {COUNTRY_OPTIONS.map((country) => (
                     <option key={country.iso} value={country.iso}>{country.label}</option>
                   ))}
                 </select>
               </div>
-              <div className="form-group">
-                <label className="form-label">Target Phone *</label>
-                <input className="form-input" value={targetPhone} onChange={(e) => setTargetPhone(e.target.value)} placeholder="e.g. 9876543210 or +919876543210" required />
-              </div>
+              {!groupId && (
+                <div className="form-group">
+                  <label className="form-label">Target Phone *</label>
+                  <input className="form-input" value={targetPhone} onChange={(e) => setTargetPhone(e.target.value)} placeholder="e.g. 9876543210 or +919876543210" required />
+                  {profilePhone && profileId && (
+                    <div style={{ marginTop: "0.35rem", fontSize: "0.76rem", color: "var(--text-muted)" }}>
+                      Defaulting to profile mobile number: +{profilePhone}
+                    </div>
+                  )}
+                </div>
+              )}
               <div className="form-group">
                 <label className="form-label">Days</label>
-                <input className="form-input" type="number" min={1} max={30} value={days} onChange={(e) => setDays(Number(e.target.value))} />
+                <select className="form-select" value={daysMode} onChange={(e) => setDaysMode(e.target.value as "auto" | "manual")}>
+                  <option value="auto">Auto</option>
+                  <option value="manual">Manual</option>
+                </select>
               </div>
-              {generationMode === "manual_frequency" && (
+              {daysMode === "manual" && (
                 <div className="form-group">
-                  <label className="form-label">Frequency (Messages/Day)</label>
+                  <label className="form-label">Number of Days</label>
+                  <input className="form-input" type="number" min={1} max={30} value={days} onChange={(e) => setDays(Number(e.target.value))} />
+                </div>
+              )}
+              <div className="form-group">
+                <label className="form-label">Frequency</label>
+                <select className="form-select" value={frequencyMode} onChange={(e) => setFrequencyMode(e.target.value as "auto" | "manual")}>
+                  <option value="auto">Auto</option>
+                  <option value="manual">Manual</option>
+                </select>
+              </div>
+              {frequencyMode === "manual" && (
+                <div className="form-group">
+                  <label className="form-label">Messages Per Day</label>
                   <input className="form-input" type="number" min={1} max={12} value={messagesPerDay} onChange={(e) => setMessagesPerDay(Number(e.target.value))} />
                 </div>
               )}
+              <div className="form-group">
+                <label className="form-label">Queue Start Date</label>
+                <input className="form-input" type="date" min={new Date().toISOString().slice(0, 10)} value={startDate} onChange={(e) => setStartDate(e.target.value)} />
+              </div>
             </div>
-            {generationMode === "ai_plan" && (
-              <div style={{ marginTop: "0.4rem", color: "var(--text-muted)", fontSize: "0.78rem" }}>
-                AI mode queues all actionable items from the selected plan for the first {days} day(s). Missing times are inferred automatically.
+            {groupId && groupPhones.length > 0 && (
+              <div className="form-group" style={{ marginTop: "0.75rem" }}>
+                <label className="form-label">Group Member Phone Numbers</label>
+                <div className="focus-areas">
+                  {groupPhones.map((member) => (
+                    <button
+                      key={`${member.id}-${member.phone}`}
+                      type="button"
+                      className={`focus-chip ${selectedGroupPhones.includes(member.phone) ? "active" : ""}`}
+                      onClick={() => toggleGroupPhone(member.phone)}
+                    >
+                      {member.label} (+{member.phone})
+                    </button>
+                  ))}
+                </div>
+                <div style={{ marginTop: "0.35rem", fontSize: "0.76rem", color: "var(--text-muted)" }}>
+                  Selected numbers will each receive their own copy of the generated queue.
+                </div>
               </div>
             )}
+            <div style={{ marginTop: "0.4rem", color: "var(--text-muted)", fontSize: "0.78rem" }}>
+              AI creates a day summary first, then detailed reminders with timings, quantities, plan name, plan id, and plan day references.
+            </div>
+            <div className="form-group" style={{ marginTop: "0.75rem" }}>
+              <label className="form-label">Notification Focus Areas (Optional)</label>
+              <div className="focus-areas">
+                {FOCUS_AREAS.map((area) => (
+                  <button
+                    key={area}
+                    type="button"
+                    className={`focus-chip ${notificationFocusAreas.includes(area) ? "active" : ""}`}
+                    onClick={() => toggleNotificationFocus(area)}
+                  >
+                    {area}
+                  </button>
+                ))}
+              </div>
+            </div>
             <div className="form-group" style={{ marginTop: "0.75rem" }}>
               <label style={{ display: "flex", alignItems: "center", gap: "0.5rem", cursor: "pointer" }}>
                 <input type="checkbox" checked={ccSelf} onChange={(e) => setCcSelf(e.target.checked)} style={{ width: "16px", height: "16px", accentColor: "var(--accent-primary)" }} />
@@ -881,13 +993,15 @@ export default function PlansNotificationsTab({ profileId, groupId, entityName, 
               <textarea className="form-textarea" value={customContext} onChange={(e) => setCustomContext(e.target.value)} placeholder="e.g. 'Use a strict coach tone' or 'Remind to take medication'" style={{ minHeight: "60px" }} />
             </div>
             {genError && <div className="form-error" style={{ marginBottom: "0.75rem" }}>{genError}</div>}
-            <button type="submit" className="btn btn-primary" disabled={generating || !targetPhone.trim()}>
+            <button
+              type="submit"
+              className="btn btn-primary"
+              disabled={Boolean(generating || (!groupId && !targetPhone.trim()) || (groupId && selectedGroupPhones.length === 0))}
+            >
               {generating ? (
                 <><span className="loading-spinner" /> Generating queue...</>
-              ) : generationMode === "ai_plan" ? (
-                "✨ Generate Queue from Plan"
               ) : (
-                "✨ Generate Custom Queue"
+                "✨ Generate Queue from Plan"
               )}
             </button>
           </form>

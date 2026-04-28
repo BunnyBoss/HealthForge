@@ -6,11 +6,8 @@ import {
   getAiConfig,
   generateCompletion,
   buildPlanItemQueuePrompt,
-  buildManualFrequencyQueuePrompt,
 } from "@/lib/ai";
 import { normalizeCountryIso, normalizePhoneNumber } from "@/lib/phone";
-
-type GenerationMode = "ai_plan" | "manual_frequency";
 
 interface GeneratedQueueItem {
   day_offset: number;
@@ -87,63 +84,77 @@ export async function POST(req: NextRequest) {
       profile_id,
       group_id,
       target_phone,
+      target_phones,
       cc_phone,
-      days = 7,
       schedule_time = "08:00",
-      generation_mode,
+      days_mode = "auto",
+      days,
+      frequency_mode = "auto",
       messages_per_day,
+      start_date,
+      focus_areas,
       custom_context,
       recipient_name,
       plan_content,
       plan_id,
+      plan_title,
       target_country_iso,
       cc_country_iso,
     } = await req.json();
 
-    if (!target_phone || !plan_content) {
-      return NextResponse.json({ error: "target_phone and plan_content are required" }, { status: 400 });
+    if (!plan_content) {
+      return NextResponse.json({ error: "plan_content is required" }, { status: 400 });
     }
 
-    const normalizedDays = Number(days);
-    if (!Number.isInteger(normalizedDays) || normalizedDays < 1 || normalizedDays > 30) {
-      return NextResponse.json({ error: "days must be an integer between 1 and 30" }, { status: 400 });
+    if (days_mode !== "auto" && days_mode !== "manual") {
+      return NextResponse.json({ error: "days_mode must be auto or manual" }, { status: 400 });
     }
 
-    if (
-      typeof generation_mode === "string" &&
-      generation_mode !== "ai_plan" &&
-      generation_mode !== "manual_frequency"
-    ) {
-      return NextResponse.json({ error: "generation_mode must be ai_plan or manual_frequency" }, { status: 400 });
+    if (frequency_mode !== "auto" && frequency_mode !== "manual") {
+      return NextResponse.json({ error: "frequency_mode must be auto or manual" }, { status: 400 });
     }
 
-    const mode: GenerationMode = generation_mode === "ai_plan" ? "ai_plan" : "manual_frequency";
-    const hasExplicitMode = typeof generation_mode === "string";
+    const requestedStartDate = typeof start_date === "string" && start_date ? start_date : new Date().toISOString().slice(0, 10);
+    const startDate = new Date(`${requestedStartDate}T00:00:00`);
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    if (Number.isNaN(startDate.getTime()) || startDate < today) {
+      return NextResponse.json({ error: "start_date must be today or a future date in YYYY-MM-DD format" }, { status: 400 });
+    }
 
-    let normalizedMessagesPerDay = Number(messages_per_day);
-    if (mode === "manual_frequency") {
-      if (!Number.isFinite(normalizedMessagesPerDay) || normalizedMessagesPerDay <= 0) {
-        if (hasExplicitMode) {
-          return NextResponse.json({ error: "messages_per_day is required for manual_frequency mode" }, { status: 400 });
-        }
-        normalizedMessagesPerDay = 1;
+    let normalizedDays: number | undefined;
+    if (days_mode === "manual") {
+      normalizedDays = Number(days);
+      if (!Number.isInteger(normalizedDays) || normalizedDays < 1 || normalizedDays > 30) {
+        return NextResponse.json({ error: "days must be an integer between 1 and 30 when days_mode is manual" }, { status: 400 });
       }
+    }
+
+    let normalizedMessagesPerDay: number | undefined;
+    if (frequency_mode === "manual") {
+      normalizedMessagesPerDay = Number(messages_per_day);
       if (!Number.isInteger(normalizedMessagesPerDay) || normalizedMessagesPerDay < 1 || normalizedMessagesPerDay > 12) {
-        return NextResponse.json({ error: "messages_per_day must be an integer between 1 and 12" }, { status: 400 });
+        return NextResponse.json({ error: "messages_per_day must be an integer between 1 and 12 when frequency_mode is manual" }, { status: 400 });
       }
     }
 
     // Generate messages with AI
     const config = getAiConfig(session.user.id);
-    const prompt = mode === "ai_plan"
-      ? buildPlanItemQueuePrompt(plan_content, recipient_name || "Friend", normalizedDays, custom_context)
-      : buildManualFrequencyQueuePrompt(
-        plan_content,
-        recipient_name || "Friend",
-        normalizedDays,
-        normalizedMessagesPerDay,
-        custom_context
-      );
+    const prompt = buildPlanItemQueuePrompt(
+      plan_content,
+      recipient_name || "Friend",
+      {
+        planTitle: typeof plan_title === "string" ? plan_title : undefined,
+        planId: typeof plan_id === "string" ? plan_id : undefined,
+        focusAreas: Array.isArray(focus_areas) ? focus_areas : [],
+        startDate: requestedStartDate,
+        daysMode: days_mode,
+        days: normalizedDays,
+        frequencyMode: frequency_mode,
+        messagesPerDay: normalizedMessagesPerDay,
+      },
+      custom_context
+    );
 
     let queueItems: GeneratedQueueItem[] = [];
     try {
@@ -152,8 +163,9 @@ export async function POST(req: NextRequest) {
       if (!parsedArray) {
         return NextResponse.json({ error: "AI returned invalid queue JSON format." }, { status: 500 });
       }
+      const maxDayOffset = Math.max(29, normalizedDays ? normalizedDays + 7 : 45);
       const normalized = parsedArray
-        .map((item) => normalizeGeneratedItem(item, normalizedDays - 1))
+        .map((item) => normalizeGeneratedItem(item, maxDayOffset))
         .filter((item): item is GeneratedQueueItem => Boolean(item));
       queueItems = normalized;
     } catch {
@@ -164,24 +176,21 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "AI returned invalid message format." }, { status: 500 });
     }
 
-    if (mode === "manual_frequency") {
-      const expected = normalizedDays * normalizedMessagesPerDay;
-      if (queueItems.length !== expected) {
-        return NextResponse.json(
-          { error: `AI returned ${queueItems.length} items; expected ${expected} for manual frequency mode.` },
-          { status: 500 }
-        );
+    if (days_mode === "manual" && normalizedDays) {
+      const maxAllowedOffset = normalizedDays - 1;
+      if (queueItems.some((item) => item.day_offset > maxAllowedOffset)) {
+        return NextResponse.json({ error: "AI returned notifications beyond the requested number of days." }, { status: 500 });
       }
+    }
+
+    if (frequency_mode === "manual" && normalizedMessagesPerDay) {
       const byDay = new Map<number, number>();
       for (const item of queueItems) {
         byDay.set(item.day_offset, (byDay.get(item.day_offset) || 0) + 1);
       }
-      for (let d = 0; d < normalizedDays; d++) {
-        if ((byDay.get(d) || 0) !== normalizedMessagesPerDay) {
-          return NextResponse.json(
-            { error: `AI returned invalid distribution for day ${d + 1}.` },
-            { status: 500 }
-          );
+      for (const [, count] of byDay) {
+        if (count < 1 || count > normalizedMessagesPerDay + 1) {
+          return NextResponse.json({ error: "AI returned an invalid per-day notification distribution." }, { status: 500 });
         }
       }
     }
@@ -192,10 +201,26 @@ export async function POST(req: NextRequest) {
       .get(session.user.id) as { default_country_iso?: string | null } | undefined;
     const defaultCountry = normalizeCountryIso(settings?.default_country_iso);
 
-    const normalizedTarget = normalizePhoneNumber(target_phone, target_country_iso || defaultCountry);
-    if (!normalizedTarget.ok) {
-      return NextResponse.json({ error: `Invalid target_phone: ${normalizedTarget.error}` }, { status: 400 });
+    const requestedPhones = Array.isArray(target_phones)
+      ? target_phones.filter((value): value is string => typeof value === "string" && value.trim().length > 0)
+      : [];
+    if (requestedPhones.length === 0 && (!target_phone || !String(target_phone).trim())) {
+      return NextResponse.json({ error: "At least one target phone is required" }, { status: 400 });
     }
+
+    const normalizedTargets = (requestedPhones.length > 0 ? requestedPhones : [String(target_phone)])
+      .map((phone) => normalizePhoneNumber(phone, target_country_iso || defaultCountry));
+    const invalidTarget = normalizedTargets.find((item) => !item.ok);
+    if (invalidTarget && !invalidTarget.ok) {
+      return NextResponse.json({ error: `Invalid target_phone: ${invalidTarget.error}` }, { status: 400 });
+    }
+    const uniqueTargets = Array.from(
+      new Set(
+        normalizedTargets
+          .filter((item): item is Extract<typeof item, { ok: true }> => item.ok)
+          .map((item) => item.digits)
+      )
+    );
 
     let normalizedCcPhone: string | null = null;
     if (cc_phone) {
@@ -210,12 +235,12 @@ export async function POST(req: NextRequest) {
 
     if (plan_id) {
       const linkedPlan = db.prepare(`
-        SELECT hp.id, hp.profile_id, hp.group_id
+        SELECT hp.id, hp.profile_id, hp.group_id, hp.title
         FROM health_plans hp
         LEFT JOIN profiles p ON hp.profile_id = p.id
         LEFT JOIN profile_groups g ON hp.group_id = g.id
         WHERE hp.id = ? AND (p.user_id = ? OR g.user_id = ?)
-      `).get(plan_id, session.user.id, session.user.id) as { id: string; profile_id?: string | null; group_id?: string | null } | undefined;
+      `).get(plan_id, session.user.id, session.user.id) as { id: string; profile_id?: string | null; group_id?: string | null; title?: string | null } | undefined;
 
       if (!linkedPlan) {
         return NextResponse.json({ error: "Invalid plan_id" }, { status: 400 });
@@ -240,8 +265,8 @@ export async function POST(req: NextRequest) {
     });
 
     for (const item of sortedQueueItems) {
-      const scheduledFor = new Date();
-      scheduledFor.setDate(scheduledFor.getDate() + item.day_offset);
+      const scheduledFor = new Date(startDate);
+      scheduledFor.setDate(startDate.getDate() + item.day_offset);
       const [hour, minute] = item.time.split(":").map(Number);
       scheduledFor.setHours(
         Number.isFinite(hour) ? hour : fallbackHour,
@@ -250,23 +275,32 @@ export async function POST(req: NextRequest) {
         0
       );
 
-      const id = randomUUID();
-      db.prepare(`
-        INSERT INTO queued_messages (id, user_id, profile_id, group_id, plan_id, target_phone, cc_phone, message_text, scheduled_for, status)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending')
-      `).run(
-        id, session.user.id,
-        profile_id || null, group_id || null,
-        linkedPlanId,
-        normalizedTarget.digits, normalizedCcPhone,
-        item.message_text,
-        scheduledFor.toISOString()
-      );
+      for (const targetDigits of uniqueTargets) {
+        const id = randomUUID();
+        db.prepare(`
+          INSERT INTO queued_messages (id, user_id, profile_id, group_id, plan_id, target_phone, cc_phone, message_text, scheduled_for, status)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending')
+        `).run(
+          id, session.user.id,
+          profile_id || null, group_id || null,
+          linkedPlanId,
+          targetDigits, normalizedCcPhone,
+          item.message_text,
+          scheduledFor.toISOString()
+        );
 
-      insertedMessages.push({ id, message_text: item.message_text, scheduled_for: scheduledFor.toISOString(), status: "pending" });
+        insertedMessages.push({ id, message_text: item.message_text, scheduled_for: scheduledFor.toISOString(), status: "pending", target_phone: targetDigits });
+      }
     }
 
-    return NextResponse.json({ created: insertedMessages.length, mode, messages: insertedMessages });
+    return NextResponse.json({
+      created: insertedMessages.length,
+      mode: "ai_plan",
+      days_mode,
+      frequency_mode,
+      start_date: requestedStartDate,
+      messages: insertedMessages,
+    });
   } catch (error) {
     console.error("Messages API error:", error);
     return NextResponse.json({ error: "Failed to generate messages" }, { status: 500 });

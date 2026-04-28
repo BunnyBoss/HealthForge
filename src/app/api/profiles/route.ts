@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { v4 as uuidv4 } from "uuid";
 import getDb from "@/lib/db";
+import { normalizeCountryIso, normalizePhoneNumber } from "@/lib/phone";
 
 // GET all profiles for the current user
 export async function GET() {
@@ -12,7 +13,7 @@ export async function GET() {
 
   const db = getDb();
   const profiles = db
-    .prepare("SELECT * FROM profiles WHERE user_id = ? ORDER BY created_at ASC")
+    .prepare("SELECT * FROM profiles WHERE user_id = ? ORDER BY is_archived ASC, created_at ASC")
     .all(session.user.id);
 
   // Parse JSON fields
@@ -38,11 +39,24 @@ export async function POST(req: NextRequest) {
     const body = await req.json();
     const db = getDb();
     const id = uuidv4();
+    const settings = db
+      .prepare("SELECT default_country_iso FROM user_settings WHERE user_id = ?")
+      .get(session.user.id) as { default_country_iso?: string | null } | undefined;
+    const defaultCountry = normalizeCountryIso(settings?.default_country_iso);
+
+    let normalizedPhoneNumber: string | null = null;
+    if (typeof body.phone_number === "string" && body.phone_number.trim()) {
+      const normalized = normalizePhoneNumber(body.phone_number, body.phone_country_iso || defaultCountry);
+      if (!normalized.ok) {
+        return NextResponse.json({ error: `Invalid phone number: ${normalized.error}` }, { status: 400 });
+      }
+      normalizedPhoneNumber = normalized.digits;
+    }
 
     db.prepare(`
       INSERT INTO profiles (id, user_id, name, relationship, age, gender, height_cm, weight_kg,
-        activity_level, dietary_preference, medical_conditions, allergies, medications, goals, additional_notes)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        activity_level, dietary_preference, medical_conditions, allergies, medications, goals, additional_notes, phone_number)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       id,
       session.user.id,
@@ -58,7 +72,8 @@ export async function POST(req: NextRequest) {
       JSON.stringify(body.allergies || []),
       JSON.stringify(body.medications || []),
       JSON.stringify(body.goals || []),
-      body.additional_notes || ""
+      body.additional_notes || "",
+      normalizedPhoneNumber
     );
 
     return NextResponse.json({ id, message: "Profile created" }, { status: 201 });

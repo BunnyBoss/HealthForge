@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import Link from "next/link";
 import { COUNTRY_OPTIONS, normalizeCountryIso, type CountryIso } from "@/lib/phone";
 
 export default function SettingsPage() {
@@ -9,7 +10,6 @@ export default function SettingsPage() {
   const [model, setModel] = useState("");
   const [adminPhone, setAdminPhone] = useState("");
   const [defaultCountryIso, setDefaultCountryIso] = useState<CountryIso>("IN");
-  const [adminCountryIso, setAdminCountryIso] = useState<CountryIso>("IN");
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState("");
@@ -25,7 +25,6 @@ export default function SettingsPage() {
         setAdminPhone(settings.admin_phone || "");
         const defaultCountry = normalizeCountryIso(settings.default_country_iso);
         setDefaultCountryIso(defaultCountry);
-        setAdminCountryIso(defaultCountry);
         setLoading(false);
       }).catch(() => setLoading(false));
   }, []);
@@ -44,7 +43,6 @@ export default function SettingsPage() {
           preferred_model: model,
           admin_phone: adminPhone,
           default_country_iso: defaultCountryIso,
-          admin_country_iso: adminCountryIso,
         }),
       });
       setMessage(res.ok ? "Settings saved successfully!" : "Failed to save settings");
@@ -131,14 +129,6 @@ export default function SettingsPage() {
               </select>
             </div>
             <div className="form-group">
-              <label className="form-label">Admin Phone Country</label>
-              <select className="form-select" value={adminCountryIso} onChange={(e) => setAdminCountryIso(normalizeCountryIso(e.target.value))}>
-                {COUNTRY_OPTIONS.map((country) => (
-                  <option key={country.iso} value={country.iso}>{country.label}</option>
-                ))}
-              </select>
-            </div>
-            <div className="form-group">
               <label className="form-label">Admin Phone Number</label>
               <input 
                 className="form-input" 
@@ -157,17 +147,11 @@ export default function SettingsPage() {
       </form>
 
       <div className="settings-section">
-        <h2>ℹ️ About HealthForge</h2>
-        <p style={{ marginBottom: "0.5rem" }}>
-          HealthForge is an AI-powered health and lifestyle recommendation platform.
-          It uses your local LiteLLM proxy to generate personalized, evidence-based
-          health plans for you, your family, and friends.
+        <h2>ℹ️ Help & About</h2>
+        <p style={{ marginBottom: "0.85rem" }}>
+          New to HealthForge? The help page walks through profiles, plans, notifications, chat context, and WhatsApp setup.
         </p>
-        <div style={{ fontSize: "0.8rem", color: "var(--text-muted)", lineHeight: "1.8" }}>
-          <strong>Version:</strong> 2.0.0<br />
-          <strong>Stack:</strong> Next.js 15 · SQLite · LiteLLM · Baileys<br />
-          <strong>Data:</strong> All data is stored locally on your machine
-        </div>
+        <Link href="/help" className="btn btn-secondary">Open Help/About</Link>
       </div>
     </div>
   );

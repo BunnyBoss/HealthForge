@@ -35,7 +35,7 @@ function AppLayoutInner({ children }: { children: React.ReactNode }) {
   const navItems = [
     { href: "/dashboard", icon: "📊", label: "Dashboard" },
     { href: "/profiles", icon: "👥", label: "Profiles" },
-    { href: "/groups", icon: "👨‍👩‍👧‍👦", label: "Groups" },
+    { href: "/help", icon: "🧭", label: "Help/About" },
     { href: "/settings", icon: "⚙️", label: "Settings" },
   ];
 

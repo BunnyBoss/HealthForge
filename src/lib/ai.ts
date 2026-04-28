@@ -50,6 +50,88 @@ export interface ProfileData {
   additional_notes?: string;
 }
 
+const FOCUS_AREA_SECTION_MAP: Record<string, { title: string; requirements: string[] }> = {
+  "🍽️ Diet & Nutrition": {
+    title: "Nutrition Plan",
+    requirements: [
+      "Specific meals with portions (breakfast, lunch, dinner, snacks)",
+      "Caloric targets and macronutrient breakdown when relevant",
+      "Foods to emphasize and avoid given medical conditions",
+      "Exact meal timings when useful",
+    ],
+  },
+  "🏋️ Exercise & Fitness": {
+    title: "Exercise Plan",
+    requirements: [
+      "Specific exercises with sets, reps, duration, and intensity",
+      "Warm-up and cool-down routines",
+      "Rest day scheduling or recovery pairing when relevant",
+      "Adjustments based on current fitness level or health conditions",
+    ],
+  },
+  "😴 Sleep & Recovery": {
+    title: "Sleep & Recovery",
+    requirements: [
+      "Sleep schedule recommendations",
+      "Sleep hygiene practices",
+      "Recovery strategies for workouts, fatigue, or stress",
+    ],
+  },
+  "🧘 Stress Management": {
+    title: "Stress Management",
+    requirements: [
+      "Specific stress reduction techniques",
+      "Mindfulness, breathwork, or relaxation routines",
+      "How often and when to do them",
+    ],
+  },
+  "💊 Supplements": {
+    title: "Supplement Considerations",
+    requirements: [
+      "Evidence-based supplement suggestions with dosages when appropriate",
+      "Medication/condition interactions to watch for",
+      "Exact timing recommendations",
+    ],
+  },
+  "💧 Hydration": {
+    title: "Hydration Plan",
+    requirements: [
+      "Daily fluid targets",
+      "Timing guidance across the day",
+      "Electrolyte or hydration adjustments when relevant",
+      "Exact drink quantity guidance, not generic reminders",
+    ],
+  },
+  "🧠 Mental Wellness": {
+    title: "Mental Wellness",
+    requirements: [
+      "Daily mental wellness habits",
+      "Mood-supportive routines and reflection prompts",
+      "Practical frequency and timing guidance",
+    ],
+  },
+  "❤️ Heart Health": {
+    title: "Heart Health",
+    requirements: [
+      "Heart-supportive meals, movement, and recovery guidance",
+      "Blood pressure/cholesterol friendly choices when relevant",
+      "Safety precautions and progression guidance",
+    ],
+  },
+};
+
+function getSelectedFocusAreaSpecs(focusAreas: string[]): { title: string; requirements: string[] }[] {
+  const selected = focusAreas
+    .map((area) => FOCUS_AREA_SECTION_MAP[area])
+    .filter(Boolean);
+
+  if (selected.length > 0) {
+    return selected;
+  }
+
+  return Object.values(FOCUS_AREA_SECTION_MAP);
+}
+
 export function buildProfileContext(profile: ProfileData): string {
   const parts: string[] = [];
   parts.push(`**Name:** ${profile.name}`);
@@ -107,50 +189,33 @@ export function buildPlanPrompt(
   focusAreas: string[]
 ): string {
   const duration = planType === "monthly" ? "30-day" : planType === "custom" ? "personalized" : "7-day";
-  const areas = focusAreas.length > 0 ? focusAreas.join(", ") : "diet, exercise, sleep, stress management, supplements";
+  const areas = focusAreas.length > 0 ? focusAreas.join(", ") : Object.keys(FOCUS_AREA_SECTION_MAP).join(", ");
+  const sections = getSelectedFocusAreaSpecs(focusAreas)
+    .map((section) => `### ${section.title}\n${section.requirements.map((req) => `- ${req}`).join("\n")}`)
+    .join("\n\n");
 
   return `Generate a comprehensive, personalized ${duration} health and lifestyle plan.
 
 ## Focus Areas: ${areas}
 
+## Important Scope Rule
+- ONLY include content for the selected focus areas.
+- DO NOT include extra sections for unselected focus areas.
+- If only one area is selected (for example Hydration), the entire output must stay within that area plus safety notes.
+
 ## Required Plan Structure
-For each day/week, provide SPECIFIC and ACTIONABLE recommendations organized in these sections:
+For each day/week, provide SPECIFIC and ACTIONABLE recommendations organized only in the selected sections below:
 
-### 🍽️ Nutrition Plan
-- Specific meals with portions (breakfast, lunch, dinner, snacks)
-- Caloric targets and macronutrient breakdown
-- Foods to emphasize and avoid given medical conditions
-- Hydration goals
+${sections}
 
-### 🏋️ Exercise Plan  
-- Specific exercises with sets, reps, and duration
-- Warm-up and cool-down routines
-- Rest day scheduling
-- Intensity modifications based on fitness level
+### Important Precautions
+- Include only safety notes that are directly relevant to the selected focus areas
+- Mention when to consult a healthcare provider
+- Call out medication or condition interactions only when relevant to the selected areas
 
-### 😴 Sleep & Recovery
-- Sleep schedule recommendations
-- Sleep hygiene practices
-- Recovery strategies
-
-### 🧘 Stress Management & Mental Wellness
-- Mindfulness/meditation suggestions
-- Stress reduction techniques
-- Social connection recommendations
-
-### 💊 Supplement Considerations
-- Evidence-based supplement suggestions (with dosages)
-- Interactions with current medications to watch for
-- Timing recommendations
-
-### ⚠️ Important Precautions
-- Activity modifications for medical conditions
-- Warning signs to watch for
-- When to consult a healthcare provider
-
-Make the plan progressive (gradually increasing intensity/complexity).
+Make the plan progressive when appropriate.
 Use markdown formatting with clear headers and organized sections.
-Be specific — no vague advice like "eat healthy." Give exact foods, exact exercises, exact timings.`;
+Be specific — no vague advice like "eat healthy." Give exact foods, exact exercises, exact timings, and exact quantities where relevant.`;
 }
 
 export async function streamChat(
@@ -250,9 +315,12 @@ export function buildGroupPlanPrompt(
   focusAreas: string[]
 ): string {
   const duration = "7-day";
-  const areas = focusAreas.length > 0 ? focusAreas.join(", ") : "diet, exercise, sleep, stress management";
+  const areas = focusAreas.length > 0 ? focusAreas.join(", ") : Object.keys(FOCUS_AREA_SECTION_MAP).join(", ");
   const goals = groupGoals.length > 0 ? groupGoals.join(", ") : "overall family wellness";
   const memberNames = profiles.map((p) => p.name).join(", ");
+  const selectedSections = getSelectedFocusAreaSpecs(focusAreas)
+    .map((section) => `#### ${section.title}\n${section.requirements.map((req) => `- ${req}`).join("\n")}`)
+    .join("\n\n");
 
   const typeLabel: Record<string, string> = {
     family_meal: "Family Meal Plan",
@@ -271,33 +339,22 @@ export function buildGroupPlanPrompt(
 ### ⚠️ Conflict Analysis
 First, analyze the group and identify any conflicts between members' health needs (dietary restrictions, medical conditions, activity levels, age differences). Flag each conflict with a ⚠️ warning and explain how you'll handle it.
 
+### Scope Rule
+- ONLY include recommendations for the selected focus areas.
+- DO NOT add extra sections outside those areas.
+
 ### 📋 Shared Plan
 Generate a plan that works for ALL members. For each day, provide:
 
-#### 🍽️ Shared Meals
-- Specific meals with portions that respect ALL allergies and dietary needs
-- Base meals that everyone can eat together
-- Mark any per-member modifications clearly
-
-#### 🏋️ Group Activities
-- Exercises the group can do together
-- Intensity levels appropriate for the youngest/oldest/least fit member
-- Optional intensity boosters for fitter members
-
-#### 😴 Shared Schedule
-- Wake/sleep times, meal times, activity times
-- Consider different age groups (kids' bedtimes vs adults)
+${selectedSections}
 
 ### 👤 Per-Member Modifications
 For EACH member who needs exceptions from the shared plan, provide a dedicated section with:
-- What they should add/remove/modify from the shared meals
-- Exercise intensity adjustments
-- Supplement recommendations specific to their conditions
-- Any medication timing considerations
+- Only modifications that are relevant to the selected focus areas
+- Exact quantities, timing, and substitutions where needed
 
 ### ⚠️ Safety Warnings
-- Medication interactions to watch for
-- Activity restrictions per member
+- Only safety warnings relevant to the selected focus areas
 - When to consult a healthcare provider
 
 Be SPECIFIC — exact foods, exact exercises, exact timings. No vague advice.
@@ -340,20 +397,48 @@ Example format: ["Message 1 text here", "Message 2 text here", ...]`;
 export function buildPlanItemQueuePrompt(
   planContent: string,
   recipientName: string,
-  days: number,
+  options: {
+    planTitle?: string;
+    planId?: string;
+    focusAreas?: string[];
+    startDate?: string;
+    daysMode: "auto" | "manual";
+    days?: number;
+    frequencyMode: "auto" | "manual";
+    messagesPerDay?: number;
+  },
   customContext?: string
 ): string {
+  const areaText = options.focusAreas?.length ? options.focusAreas.join(", ") : "all focus areas in the selected plan";
+  const daysInstruction = options.daysMode === "manual"
+    ? `Generate queue entries for exactly ${options.days} plan day(s), beginning with day 1 of the selected plan.`
+    : "Infer how many plan day(s) should be queued from the selected plan structure, beginning with day 1 of the selected plan.";
+  const frequencyInstruction = options.frequencyMode === "manual"
+    ? `For each queued plan day, create exactly ${options.messagesPerDay} detailed action reminders plus one extra early-morning day-summary notification.`
+    : "Infer the right number of detailed reminders per day from the plan, and also create one extra early-morning day-summary notification for each queued day.";
+
   return `You are a health plan scheduling assistant.
 
 Goal:
-- Read the health plan and extract ALL actionable plan items for the first ${days} day(s).
-- Generate WhatsApp-ready queue entries for ${recipientName}.
+- Read the selected health plan and generate WhatsApp-ready queue entries for ${recipientName}.
+- Limit queue content to these focus areas only: ${areaText}.
+- Plan title: ${options.planTitle || "Selected Plan"}.
+- Plan ID: ${options.planId || "N/A"}.
+
+Scheduling rules:
+- ${daysInstruction}
+- ${frequencyInstruction}
+- The queue start calendar date is ${options.startDate || "the user-selected start date"}.
 
 Rules:
-- Include every actionable item (meals, workouts, hydration, medication reminders, sleep/wind-down, etc.) for day 1..${days}.
+- Use day_offset relative to the selected start calendar date. Day 1 of the plan must use day_offset 0.
+- Include only actionable items that belong to the selected focus areas.
+- The first notification for each queued day must be an early-morning summary of the full selected-focus-area plan for that day.
 - If a plan item has a time, preserve it.
 - If a plan item has no explicit time, assign a practical local time.
-- Keep each message concise (under 400 chars), clear, and specific about what to do at that time.
+- Keep every message clear, specific, and operational.
+- Preserve important detail like quantity, duration, sets/reps, meal portions, hydration volume, medication timing, or any other actionable amount.
+- Include the plan title, short plan identifier, plan day number, and the scheduled time context directly in the message text.
 - Use 24-hour HH:MM format for "time".
 - Return only unique and meaningful reminders (no duplicates).
 ${customContext ? `\nAdditional context/instructions: ${customContext}` : ""}
@@ -364,52 +449,12 @@ ${planContent.substring(0, 5000)}
 Output format:
 Return ONLY valid JSON as an array of objects with this exact schema:
 [
-  { "day_offset": 0, "time": "07:30", "message_text": "..." },
+  { "day_offset": 0, "time": "06:30", "message_text": "..." },
   { "day_offset": 0, "time": "12:45", "message_text": "..." }
 ]
 
 Constraints:
-- day_offset is an integer from 0 to ${Math.max(0, days - 1)}.
-- time must be a valid HH:MM 24-hour string.
-- Do not include markdown or explanation outside the JSON array.`;
-}
-
-export function buildManualFrequencyQueuePrompt(
-  planContent: string,
-  recipientName: string,
-  days: number,
-  messagesPerDay: number,
-  customContext?: string
-): string {
-  const total = days * messagesPerDay;
-  return `You are a health coaching scheduler assistant.
-
-Goal:
-- Design exactly ${total} queued WhatsApp reminders for ${recipientName} over ${days} day(s).
-- Schedule exactly ${messagesPerDay} reminders per day.
-
-Rules:
-- Use the health plan as the source of tasks/advice.
-- Create reminders that are actionable, specific, and varied.
-- AI should choose the best timestamp for each reminder.
-- Use 24-hour HH:MM format for "time".
-- Keep message_text under 400 characters.
-${customContext ? `\nAdditional context/instructions: ${customContext}` : ""}
-
-Health Plan:
-${planContent.substring(0, 5000)}
-
-Output format:
-Return ONLY valid JSON as an array of objects with this exact schema:
-[
-  { "day_offset": 0, "time": "08:15", "message_text": "..." },
-  { "day_offset": 0, "time": "18:45", "message_text": "..." }
-]
-
-Constraints:
-- Exactly ${total} objects total.
-- Exactly ${messagesPerDay} objects for each day_offset.
-- day_offset must be an integer from 0 to ${Math.max(0, days - 1)}.
+- day_offset must be a non-negative integer.
 - time must be a valid HH:MM 24-hour string.
 - Do not include markdown or explanation outside the JSON array.`;
 }

@@ -3,7 +3,6 @@
 import { useEffect, useState } from "react";
 import { useSession } from "next-auth/react";
 import Link from "next/link";
-import PedigreeGraph from "@/components/PedigreeGraph";
 
 interface Profile {
   id: string;
@@ -19,7 +18,6 @@ export default function DashboardPage() {
   const { data: session } = useSession();
   const [profiles, setProfiles] = useState<Profile[]>([]);
   const [loading, setLoading] = useState(true);
-  const [viewMode, setViewMode] = useState<"grid" | "network">("grid");
 
   useEffect(() => {
     fetch("/api/profiles")
@@ -35,14 +33,6 @@ export default function DashboardPage() {
   const hour = new Date().getHours();
   const greeting =
     hour < 12 ? "Good morning" : hour < 17 ? "Good afternoon" : "Good evening";
-
-  const getRelationIcon = (rel: string) => {
-    const icons: Record<string, string> = {
-      self: "🧑", spouse: "💑", child: "👶", parent: "👨‍🦳", sibling: "👫",
-      friend: "🤝", colleague: "💼", other: "👤",
-    };
-    return icons[rel] || "👤";
-  };
 
   return (
     <div className="page-container animate-fade-in">
@@ -93,90 +83,20 @@ export default function DashboardPage() {
         </div>
       </div>
 
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.5rem', marginTop: '2rem' }}>
-        <div className="section-title" style={{ margin: 0 }}>🌍 Network Overview</div>
-        
-        <div className="tabs" style={{ marginBottom: 0, borderBottom: 'none' }}>
-          <button 
-            className={`tab ${viewMode === 'grid' ? 'active' : ''}`}
-            onClick={() => setViewMode('grid')}
-            style={{ padding: '0.4rem 1rem' }}
-          >
-            🔲 Grid
-          </button>
-          <button 
-            className={`tab ${viewMode === 'network' ? 'active' : ''}`}
-            onClick={() => setViewMode('network')}
-            style={{ padding: '0.4rem 1rem' }}
-          >
-            🕸️ Network
-          </button>
-        </div>
-      </div>
-
       {loading ? (
         <div className="loading-center">
           <span className="loading-spinner lg" />
         </div>
-      ) : viewMode === 'grid' ? (
-        <div className="profiles-grid animate-fade-in">
-          {profiles.map((profile) => (
-            <Link
-              key={profile.id}
-              href={`/profiles/${profile.id}`}
-              style={{ textDecoration: "none" }}
-            >
-              <div className="profile-card">
-                <div className="profile-card-header">
-                  <div className={`profile-avatar ${profile.relationship || "other"}`}>
-                    {getRelationIcon(profile.relationship)}
-                  </div>
-                  <div>
-                    <div className="profile-card-name">{profile.name}</div>
-                    <div className="profile-card-relation" style={{ textTransform: 'capitalize' }}>
-                      {profile.relationship || "Profile"}
-                    </div>
-                  </div>
-                </div>
-
-                <div className="profile-card-stats">
-                  {profile.age && (
-                    <div className="profile-stat">
-                      <span className="icon">🎂</span> {profile.age} years
-                    </div>
-                  )}
-                  {profile.gender && (
-                    <div className="profile-stat">
-                      <span className="icon">
-                        {profile.gender === "male" ? "♂️" : profile.gender === "female" ? "♀️" : "⚧️"}
-                      </span>{" "}
-                      {profile.gender}
-                    </div>
-                  )}
-                </div>
-
-                <div className="profile-tags">
-                  {profile.medical_conditions?.slice(0, 3).map((c) => (
-                    <span key={c} className="tag tag-condition">{c}</span>
-                  ))}
-                  {profile.goals?.slice(0, 2).map((g) => (
-                    <span key={g} className="tag tag-goal">{g}</span>
-                  ))}
-                </div>
-              </div>
-            </Link>
-          ))}
-
-          <Link href="/profiles?new=true" style={{ textDecoration: "none" }}>
-            <div className="add-profile-card">
-              <span className="icon">➕</span>
-              <span>Add Profile</span>
-            </div>
-          </Link>
-        </div>
       ) : (
-        <div className="animate-fade-in">
-          <PedigreeGraph profiles={profiles} />
+        <div className="card" style={{ padding: "1.25rem", marginTop: "2rem" }}>
+          <h3 style={{ marginTop: 0 }}>Profile management moved to Profiles</h3>
+          <p style={{ marginBottom: "1rem", color: "var(--text-muted)" }}>
+            Use the Profiles page for adding profiles/groups and switching between grid and network views.
+          </p>
+          <div style={{ display: "flex", gap: "0.75rem", flexWrap: "wrap" }}>
+            <Link href="/profiles" className="btn btn-primary">Open Profiles</Link>
+            <Link href="/profiles?new=true" className="btn btn-secondary">Add Profile / Group</Link>
+          </div>
         </div>
       )}
     </div>

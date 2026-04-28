@@ -5,7 +5,7 @@ import getDb from "@/lib/db";
 import {
   getAiConfig,
   buildSystemPrompt,
-  buildProfileContext,
+  buildGroupSystemPrompt,
   streamChat,
   type ProfileData,
 } from "@/lib/ai";
@@ -17,57 +17,120 @@ export async function POST(req: NextRequest) {
   }
 
   try {
-    const { profileId, message, sessionId: providedSessionId, planId } = await req.json();
+    const { profileId, groupId, message, sessionId: providedSessionId, planId } = await req.json();
 
-    if (!profileId || !message) {
+    if ((!profileId && !groupId) || !message) {
       return NextResponse.json(
-        { error: "profileId and message are required" },
+        { error: "profileId or groupId and message are required" },
         { status: 400 }
       );
     }
 
     const db = getDb();
-
-    // Get profile
-    const profile = db
-      .prepare("SELECT * FROM profiles WHERE id = ? AND user_id = ?")
-      .get(profileId, session.user.id) as Record<string, unknown> | undefined;
-
-    if (!profile) {
-      return NextResponse.json({ error: "Profile not found" }, { status: 404 });
-    }
-
-    const profileData: ProfileData = {
-      name: profile.name as string,
-      age: profile.age as number | undefined,
-      gender: profile.gender as string | undefined,
-      height_cm: profile.height_cm as number | undefined,
-      weight_kg: profile.weight_kg as number | undefined,
-      activity_level: profile.activity_level as string | undefined,
-      dietary_preference: profile.dietary_preference as string | undefined,
-      medical_conditions: JSON.parse((profile.medical_conditions as string) || "[]"),
-      allergies: JSON.parse((profile.allergies as string) || "[]"),
-      medications: JSON.parse((profile.medications as string) || "[]"),
-      goals: JSON.parse((profile.goals as string) || "[]"),
-      additional_notes: profile.additional_notes as string | undefined,
-    };
-
+    let systemPrompt = "";
+    let sessionProfileId = profileId as string | null;
     let selectedPlanContent: string | null = null;
     let selectedPlanMeta: { id: string; title: string } | null = null;
-    if (planId) {
-      const selectedPlan = db
-        .prepare(`
-          SELECT id, title, content
-          FROM health_plans
-          WHERE id = ? AND profile_id = ?
-        `)
-        .get(planId, profileId) as { id: string; title: string; content: string } | undefined;
 
-      if (!selectedPlan) {
-        return NextResponse.json({ error: "Selected plan not found for this profile" }, { status: 404 });
+    if (groupId) {
+      const group = db
+        .prepare("SELECT id FROM profile_groups WHERE id = ? AND user_id = ?")
+        .get(groupId, session.user.id);
+
+      if (!group) {
+        return NextResponse.json({ error: "Group not found" }, { status: 404 });
       }
-      selectedPlanMeta = { id: selectedPlan.id, title: selectedPlan.title };
-      selectedPlanContent = selectedPlan.content;
+
+      const members = db
+        .prepare(`
+          SELECT p.* FROM profiles p
+          JOIN profile_group_members gm ON p.id = gm.profile_id
+          WHERE gm.group_id = ?
+          ORDER BY p.created_at ASC
+        `)
+        .all(groupId) as Record<string, unknown>[];
+
+      if (members.length === 0) {
+        return NextResponse.json({ error: "Group has no members" }, { status: 400 });
+      }
+
+      sessionProfileId = members[0].id as string;
+      const profilesData: ProfileData[] = members.map((profile) => ({
+        name: profile.name as string,
+        age: profile.age as number | undefined,
+        gender: profile.gender as string | undefined,
+        height_cm: profile.height_cm as number | undefined,
+        weight_kg: profile.weight_kg as number | undefined,
+        activity_level: profile.activity_level as string | undefined,
+        dietary_preference: profile.dietary_preference as string | undefined,
+        medical_conditions: JSON.parse((profile.medical_conditions as string) || "[]"),
+        allergies: JSON.parse((profile.allergies as string) || "[]"),
+        medications: JSON.parse((profile.medications as string) || "[]"),
+        goals: JSON.parse((profile.goals as string) || "[]"),
+        additional_notes: profile.additional_notes as string | undefined,
+      }));
+
+      if (planId) {
+        const selectedPlan = db
+          .prepare(`
+            SELECT id, title, content
+            FROM health_plans
+            WHERE id = ? AND group_id = ?
+          `)
+          .get(planId, groupId) as { id: string; title: string; content: string } | undefined;
+        if (!selectedPlan) {
+          return NextResponse.json({ error: "Selected plan not found for this group" }, { status: 404 });
+        }
+        selectedPlanMeta = { id: selectedPlan.id, title: selectedPlan.title };
+        selectedPlanContent = selectedPlan.content;
+      }
+
+      systemPrompt = buildGroupSystemPrompt(profilesData) + (selectedPlanContent
+        ? `\n\n## Selected Group Plan Context\nPlan ID: ${selectedPlanMeta?.id}\nPlan Title: ${selectedPlanMeta?.title}\n\nUse this plan as primary context for recommendations when relevant.\n\n${selectedPlanContent}`
+        : "");
+    } else {
+      const profile = db
+        .prepare("SELECT * FROM profiles WHERE id = ? AND user_id = ?")
+        .get(profileId, session.user.id) as Record<string, unknown> | undefined;
+
+      if (!profile) {
+        return NextResponse.json({ error: "Profile not found" }, { status: 404 });
+      }
+
+      const profileData: ProfileData = {
+        name: profile.name as string,
+        age: profile.age as number | undefined,
+        gender: profile.gender as string | undefined,
+        height_cm: profile.height_cm as number | undefined,
+        weight_kg: profile.weight_kg as number | undefined,
+        activity_level: profile.activity_level as string | undefined,
+        dietary_preference: profile.dietary_preference as string | undefined,
+        medical_conditions: JSON.parse((profile.medical_conditions as string) || "[]"),
+        allergies: JSON.parse((profile.allergies as string) || "[]"),
+        medications: JSON.parse((profile.medications as string) || "[]"),
+        goals: JSON.parse((profile.goals as string) || "[]"),
+        additional_notes: profile.additional_notes as string | undefined,
+      };
+
+      if (planId) {
+        const selectedPlan = db
+          .prepare(`
+            SELECT id, title, content
+            FROM health_plans
+            WHERE id = ? AND profile_id = ? AND (group_id IS NULL OR group_id = '')
+          `)
+          .get(planId, profileId) as { id: string; title: string; content: string } | undefined;
+
+        if (!selectedPlan) {
+          return NextResponse.json({ error: "Selected plan not found for this profile" }, { status: 404 });
+        }
+        selectedPlanMeta = { id: selectedPlan.id, title: selectedPlan.title };
+        selectedPlanContent = selectedPlan.content;
+      }
+
+      systemPrompt = buildSystemPrompt(profileData) + (selectedPlanContent
+        ? `\n\n## Selected Plan Context\nPlan ID: ${selectedPlanMeta?.id}\nPlan Title: ${selectedPlanMeta?.title}\n\nUse this plan as primary context for recommendations when relevant.\n\n${selectedPlanContent}`
+        : "");
     }
 
     // Determine session ID
@@ -76,12 +139,14 @@ export async function POST(req: NextRequest) {
       sessionId = uuidv4();
       const title = message.length > 30 ? message.substring(0, 30) + '...' : message;
       db.prepare(
-        "INSERT INTO chat_sessions (id, user_id, profile_id, plan_id, title) VALUES (?, ?, ?, ?, ?)"
-      ).run(sessionId, session.user.id, profileId, selectedPlanMeta?.id || null, title);
+        "INSERT INTO chat_sessions (id, user_id, profile_id, group_id, plan_id, title) VALUES (?, ?, ?, ?, ?, ?)"
+      ).run(sessionId, session.user.id, sessionProfileId, groupId || null, selectedPlanMeta?.id || null, title);
     } else {
-      const existingSession = db
-        .prepare("SELECT id FROM chat_sessions WHERE id = ? AND user_id = ? AND profile_id = ?")
-        .get(sessionId, session.user.id, profileId);
+      const existingSession = groupId
+        ? db.prepare("SELECT id FROM chat_sessions WHERE id = ? AND user_id = ? AND group_id = ?")
+          .get(sessionId, session.user.id, groupId)
+        : db.prepare("SELECT id FROM chat_sessions WHERE id = ? AND user_id = ? AND profile_id = ? AND (group_id IS NULL OR group_id = '')")
+          .get(sessionId, session.user.id, profileId);
       if (!existingSession) {
         return NextResponse.json({ error: "Chat session not found" }, { status: 404 });
       }
@@ -103,14 +168,11 @@ export async function POST(req: NextRequest) {
 
     // Save user message
     db.prepare(
-      "INSERT INTO chat_messages (id, session_id, profile_id, user_id, role, content) VALUES (?, ?, ?, ?, ?, ?)"
-    ).run(uuidv4(), sessionId, profileId, session.user.id, "user", message);
+      "INSERT INTO chat_messages (id, session_id, profile_id, group_id, user_id, role, content) VALUES (?, ?, ?, ?, ?, ?, ?)"
+    ).run(uuidv4(), sessionId, sessionProfileId, groupId || null, session.user.id, "user", message);
 
     // Build messages array
     const config = getAiConfig(session.user.id);
-    const systemPrompt = buildSystemPrompt(profileData) + (selectedPlanContent
-      ? `\n\n## Selected Plan Context\nPlan ID: ${selectedPlanMeta?.id}\nPlan Title: ${selectedPlanMeta?.title}\n\nUse this plan as primary context for recommendations when relevant.\n\n${selectedPlanContent}`
-      : "");
 
     const messages = [
       { role: "system", content: systemPrompt },
@@ -148,11 +210,12 @@ export async function POST(req: NextRequest) {
         if (fullResponse) {
           try {
             db.prepare(
-              "INSERT INTO chat_messages (id, session_id, profile_id, user_id, role, content, model_used) VALUES (?, ?, ?, ?, ?, ?, ?)"
+              "INSERT INTO chat_messages (id, session_id, profile_id, group_id, user_id, role, content, model_used) VALUES (?, ?, ?, ?, ?, ?, ?, ?)"
             ).run(
               uuidv4(),
               sessionId,
-              profileId,
+              sessionProfileId,
+              groupId || null,
               session.user.id,
               "assistant",
               fullResponse,

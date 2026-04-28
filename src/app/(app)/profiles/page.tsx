@@ -3,6 +3,8 @@
 import { useEffect, useState, Suspense } from "react";
 import { useSearchParams } from "next/navigation";
 import Link from "next/link";
+import { COUNTRY_OPTIONS, normalizeCountryIso, type CountryIso } from "@/lib/phone";
+import PedigreeGraph from "@/components/PedigreeGraph";
 
 interface Profile {
   id: string;
@@ -19,6 +21,27 @@ interface Profile {
   medications: string[];
   goals: string[];
   additional_notes?: string;
+  phone_number?: string | null;
+  is_archived?: number;
+}
+
+interface Group {
+  id: string;
+  name: string;
+  description: string;
+  group_type: string;
+  group_goals: string[];
+  member_count: number;
+  created_at: string;
+}
+
+interface GroupDetail {
+  id: string;
+  name: string;
+  description: string;
+  group_type: string;
+  group_goals: string[];
+  members: { id: string; name: string }[];
 }
 
 const MEDICAL_CONDITIONS = [
@@ -41,12 +64,31 @@ const ALLERGIES = [
   "NSAIDs", "Latex", "Pollen", "Dust Mites",
 ];
 
+const GROUP_TYPES = [
+  { value: "family_meal", label: "🍽️ Family Meal Plan" },
+  { value: "workout", label: "🏋️ Group Workout" },
+  { value: "wellness", label: "🧘 Wellness Challenge" },
+  { value: "custom", label: "⚡ Custom" },
+];
+
+const GROUP_GOALS = [
+  "Weight Management", "Healthy Eating", "Active Lifestyle", "Better Sleep",
+  "Stress Reduction", "Heart Health", "Family Fitness", "Meal Prep Together",
+  "Sugar Control", "Joint Health", "Energy Boost", "Immunity Building",
+];
+
 function ProfileFormModal({
   profile,
+  defaultCountryIso,
+  createTab,
+  onSwitchToGroup,
   onClose,
   onSave,
 }: {
   profile?: Profile;
+  defaultCountryIso: CountryIso;
+  createTab?: "profile" | "group";
+  onSwitchToGroup?: () => void;
   onClose: () => void;
   onSave: () => void;
 }) {
@@ -64,6 +106,8 @@ function ProfileFormModal({
     medications: profile?.medications || [],
     goals: profile?.goals || [],
     additional_notes: profile?.additional_notes || "",
+    phone_number: profile?.phone_number || "",
+    phone_country_iso: defaultCountryIso,
   });
   const [medInput, setMedInput] = useState("");
   const [saving, setSaving] = useState(false);
@@ -147,6 +191,15 @@ function ProfileFormModal({
           </button>
         </div>
 
+        {!profile && (
+          <div style={{ display: "flex", gap: "0.5rem", padding: "0 1.5rem 1rem", flexWrap: "wrap" }}>
+            <button type="button" className={`btn ${createTab !== "group" ? "btn-primary" : "btn-secondary"}`}>Add Profile</button>
+            <button type="button" className={`btn ${createTab === "group" ? "btn-primary" : "btn-secondary"}`} onClick={onSwitchToGroup}>
+              Add Group
+            </button>
+          </div>
+        )}
+
         <form onSubmit={handleSubmit}>
           <div className="modal-body">
             {error && <div className="form-error" style={{ marginBottom: "1rem" }}>{error}</div>}
@@ -229,6 +282,30 @@ function ProfileFormModal({
                     value={form.weight_kg}
                     onChange={(e) => setForm({ ...form, weight_kg: e.target.value })}
                     placeholder="e.g. 70"
+                  />
+                </div>
+              </div>
+
+              <div className="form-row">
+                <div className="form-group">
+                  <label className="form-label">Phone Country</label>
+                  <select
+                    className="form-select"
+                    value={form.phone_country_iso}
+                    onChange={(e) => setForm({ ...form, phone_country_iso: normalizeCountryIso(e.target.value) })}
+                  >
+                    {COUNTRY_OPTIONS.map((country) => (
+                      <option key={country.iso} value={country.iso}>{country.label}</option>
+                    ))}
+                  </select>
+                </div>
+                <div className="form-group">
+                  <label className="form-label">Mobile Number (Optional)</label>
+                  <input
+                    className="form-input"
+                    value={form.phone_number}
+                    onChange={(e) => setForm({ ...form, phone_number: e.target.value })}
+                    placeholder="e.g. 9876543210 or +919876543210"
                   />
                 </div>
               </div>
@@ -384,15 +461,34 @@ function ProfileFormModal({
 function ProfilesPageInner() {
   const searchParams = useSearchParams();
   const [profiles, setProfiles] = useState<Profile[]>([]);
+  const [groups, setGroups] = useState<Group[]>([]);
   const [loading, setLoading] = useState(true);
   const [showModal, setShowModal] = useState(searchParams.get("new") === "true");
   const [editProfile, setEditProfile] = useState<Profile | undefined>();
+  const [defaultCountryIso, setDefaultCountryIso] = useState<CountryIso>("IN");
+  const [entityFilter, setEntityFilter] = useState<"all" | "profiles" | "groups">("all");
+  const [createTab, setCreateTab] = useState<"profile" | "group">("profile");
+  const [groupName, setGroupName] = useState("");
+  const [groupDescription, setGroupDescription] = useState("");
+  const [groupType, setGroupType] = useState("custom");
+  const [groupGoals, setGroupGoals] = useState<string[]>([]);
+  const [selectedMembers, setSelectedMembers] = useState<string[]>([]);
+  const [editingGroupId, setEditingGroupId] = useState<string | null>(null);
+  const [groupSaving, setGroupSaving] = useState(false);
+  const [groupError, setGroupError] = useState("");
+  const [viewMode, setViewMode] = useState<"grid" | "network">("grid");
+  const [showArchivedProfiles, setShowArchivedProfiles] = useState(false);
 
   const loadProfiles = () => {
-    fetch("/api/profiles")
-      .then((r) => r.json())
-      .then((data) => {
+    Promise.all([
+      fetch("/api/profiles").then((r) => r.json()),
+      fetch("/api/groups").then((r) => r.json()).catch(() => []),
+      fetch("/api/settings").then((r) => r.json()).catch(() => ({ default_country_iso: "IN" })),
+    ])
+      .then(([data, groupsData, settings]) => {
         setProfiles(Array.isArray(data) ? data : []);
+        setGroups(Array.isArray(groupsData) ? groupsData : []);
+        setDefaultCountryIso(normalizeCountryIso(settings.default_country_iso));
         setLoading(false);
       })
       .catch(() => setLoading(false));
@@ -408,6 +504,17 @@ function ProfilesPageInner() {
     loadProfiles();
   };
 
+  const handleSetArchived = async (profile: Profile, archived: boolean) => {
+    const actionLabel = archived ? "archive" : "restore";
+    if (!confirm(`Are you sure you want to ${actionLabel} ${profile.name}'s profile?`)) return;
+    await fetch(`/api/profiles/${profile.id}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ is_archived: archived }),
+    });
+    loadProfiles();
+  };
+
   const getRelationIcon = (rel: string) => {
     const icons: Record<string, string> = {
       self: "🧑", spouse: "💑", child: "👶", parent: "👨‍🦳", sibling: "👫",
@@ -416,32 +523,185 @@ function ProfilesPageInner() {
     return icons[rel] || "👤";
   };
 
+  const getGroupIcon = (type: string) => {
+    const icons: Record<string, string> = {
+      family_meal: "🍽️",
+      workout: "🏋️",
+      wellness: "🧘",
+      custom: "👨‍👩‍👧‍👦",
+    };
+    return icons[type] || "👨‍👩‍👧‍👦";
+  };
+
+  const toggleGoal = (goal: string) => {
+    setGroupGoals((prev) => prev.includes(goal) ? prev.filter((item) => item !== goal) : [...prev, goal]);
+  };
+
+  const toggleMember = (id: string) => {
+    setSelectedMembers((prev) => prev.includes(id) ? prev.filter((item) => item !== id) : [...prev, id]);
+  };
+
+  const resetGroupForm = () => {
+    setGroupName("");
+    setGroupDescription("");
+    setGroupType("custom");
+    setGroupGoals([]);
+    setSelectedMembers([]);
+    setEditingGroupId(null);
+    setGroupError("");
+  };
+
+  const handleSaveGroup = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!groupName.trim()) {
+      setGroupError("Group name is required");
+      return;
+    }
+    if (selectedMembers.length < 2) {
+      setGroupError("Select at least 2 members");
+      return;
+    }
+
+    setGroupSaving(true);
+    setGroupError("");
+    try {
+      const isEditing = Boolean(editingGroupId);
+      const path = isEditing ? `/api/groups/${editingGroupId}` : "/api/groups";
+      const res = await fetch(path, {
+        method: isEditing ? "PUT" : "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          name: groupName.trim(),
+          description: groupDescription,
+          group_type: groupType,
+          group_goals: groupGoals,
+          member_ids: selectedMembers,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        setGroupError(data.error || "Failed to save group");
+        return;
+      }
+      setShowModal(false);
+      resetGroupForm();
+      loadProfiles();
+    } catch {
+      setGroupError("Something went wrong");
+    } finally {
+      setGroupSaving(false);
+    }
+  };
+
+  const handleEditGroup = async (groupId: string) => {
+    setGroupError("");
+    try {
+      const res = await fetch(`/api/groups/${groupId}`);
+      const data = await res.json();
+      if (!res.ok) {
+        setGroupError(data.error || "Failed to load group");
+        return;
+      }
+      const detail = data as GroupDetail;
+      setEditingGroupId(detail.id);
+      setGroupName(detail.name || "");
+      setGroupDescription(detail.description || "");
+      setGroupType(detail.group_type || "custom");
+      setGroupGoals(Array.isArray(detail.group_goals) ? detail.group_goals : []);
+      setSelectedMembers(Array.isArray(detail.members) ? detail.members.map((member) => member.id) : []);
+      setCreateTab("group");
+      setShowModal(true);
+    } catch {
+      setGroupError("Failed to load group");
+    }
+  };
+
+  const handleDeleteGroup = async (id: string, name: string) => {
+    if (!confirm(`Delete group "${name}"? Member profiles will remain.`)) return;
+    await fetch(`/api/groups/${id}`, { method: "DELETE" });
+    loadProfiles();
+  };
+
+  const visibleProfiles = showArchivedProfiles
+    ? profiles
+    : profiles.filter((profile) => Number(profile.is_archived || 0) === 0);
+
+  const archivedProfilesCount = profiles.filter((profile) => Number(profile.is_archived || 0) === 1).length;
+  const hasAnyEntity = profiles.length > 0 || groups.length > 0;
+  const selectableProfiles = profiles.filter((profile) =>
+    Number(profile.is_archived || 0) === 0 || selectedMembers.includes(profile.id)
+  );
+
   return (
     <div className="page-container animate-fade-in">
       <div className="page-header-actions">
         <div className="page-header">
           <h1>Profiles</h1>
-          <p>Manage health profiles for you, your family, and friends</p>
+          <p>Manage individual profiles and shared groups in one place</p>
         </div>
-        <button className="btn btn-primary" onClick={() => { setEditProfile(undefined); setShowModal(true); }}>
-          ➕ Add Profile
+        <button className="btn btn-primary" onClick={() => { setEditProfile(undefined); setCreateTab("profile"); setShowModal(true); }}>
+          ➕ Add Profile / Group
         </button>
+      </div>
+
+      <div style={{ display: "flex", gap: "0.5rem", marginBottom: "1rem", flexWrap: "wrap" }}>
+        <button className={`btn ${entityFilter === "all" ? "btn-primary" : "btn-secondary"}`} onClick={() => setEntityFilter("all")}>All</button>
+        <button className={`btn ${entityFilter === "profiles" ? "btn-primary" : "btn-secondary"}`} onClick={() => setEntityFilter("profiles")}>Profiles</button>
+        <button className={`btn ${entityFilter === "groups" ? "btn-primary" : "btn-secondary"}`} onClick={() => setEntityFilter("groups")}>Groups</button>
+        <button
+          className={`btn ${showArchivedProfiles ? "btn-primary" : "btn-secondary"}`}
+          onClick={() => setShowArchivedProfiles((prev) => !prev)}
+        >
+          {showArchivedProfiles ? "Hide Archived Profiles" : `Show Archived Profiles${archivedProfilesCount > 0 ? ` (${archivedProfilesCount})` : ""}`}
+        </button>
+      </div>
+
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "1.25rem", gap: "0.75rem", flexWrap: "wrap" }}>
+        <div className="section-title" style={{ margin: 0 }}>🌍 View</div>
+        <div className="tabs" style={{ marginBottom: 0, borderBottom: "none" }}>
+          <button
+            className={`tab ${viewMode === "grid" ? "active" : ""}`}
+            onClick={() => setViewMode("grid")}
+            style={{ padding: "0.4rem 1rem" }}
+          >
+            🔲 Grid
+          </button>
+          <button
+            className={`tab ${viewMode === "network" ? "active" : ""}`}
+            onClick={() => setViewMode("network")}
+            style={{ padding: "0.4rem 1rem" }}
+          >
+            🕸️ Network
+          </button>
+        </div>
       </div>
 
       {loading ? (
         <div className="loading-center"><span className="loading-spinner lg" /></div>
-      ) : profiles.length === 0 ? (
+      ) : !hasAnyEntity ? (
         <div className="empty-state">
           <div className="icon">👥</div>
-          <h3>No profiles yet</h3>
-          <p>Create your first health profile to get personalized AI recommendations</p>
-          <button className="btn btn-primary" onClick={() => setShowModal(true)}>
-            Create First Profile
+          <h3>No profiles or groups yet</h3>
+          <p>Create your first profile or group to get personalized AI recommendations</p>
+          <button className="btn btn-primary" onClick={() => { setCreateTab("profile"); setShowModal(true); }}>
+            Create First Item
           </button>
+        </div>
+      ) : viewMode === "network" ? (
+        <div className="animate-fade-in">
+          {visibleProfiles.length > 0 ? (
+            <PedigreeGraph profiles={visibleProfiles} />
+          ) : (
+            <div className="empty-state">
+              <div className="icon">🕸️</div>
+              <h3>No profiles available for network view</h3>
+              <p>{showArchivedProfiles ? "Add at least one profile to use the network graph." : "All profiles are archived. Enable \"Show Archived Profiles\" to include them."}</p>
+            </div>
+          )}
         </div>
       ) : (
         <div className="profiles-grid">
-          {profiles.map((profile) => (
+          {entityFilter !== "groups" && visibleProfiles.map((profile) => (
             <div key={profile.id} className="profile-card">
               <Link href={`/profiles/${profile.id}`} style={{ textDecoration: "none", color: "inherit" }}>
                 <div className="profile-card-header">
@@ -450,7 +710,10 @@ function ProfilesPageInner() {
                   </div>
                   <div>
                     <div className="profile-card-name">{profile.name}</div>
-                    <div className="profile-card-relation">{profile.relationship}</div>
+                    <div className="profile-card-relation">
+                      {profile.relationship}
+                      {Number(profile.is_archived || 0) === 1 ? " · Archived" : ""}
+                    </div>
                   </div>
                 </div>
 
@@ -462,6 +725,9 @@ function ProfilesPageInner() {
                     <div className="profile-stat">
                       <span className="icon">{profile.gender === "male" ? "♂️" : "♀️"}</span> {profile.gender}
                     </div>
+                  )}
+                  {profile.phone_number && (
+                    <div className="profile-stat"><span className="icon">📱</span> +{profile.phone_number}</div>
                   )}
                 </div>
 
@@ -487,6 +753,13 @@ function ProfilesPageInner() {
                   ✏️ Edit
                 </button>
                 <button
+                  className="btn btn-secondary btn-sm"
+                  onClick={() => handleSetArchived(profile, Number(profile.is_archived || 0) === 0)}
+                  title={Number(profile.is_archived || 0) === 0 ? "Archive profile" : "Restore profile"}
+                >
+                  {Number(profile.is_archived || 0) === 0 ? "🗂️" : "↩️"}
+                </button>
+                <button
                   className="btn btn-danger btn-sm"
                   onClick={() => handleDelete(profile.id, profile.name)}
                 >
@@ -496,19 +769,126 @@ function ProfilesPageInner() {
             </div>
           ))}
 
-          <div className="add-profile-card" onClick={() => { setEditProfile(undefined); setShowModal(true); }}>
+          {entityFilter !== "profiles" && groups.map((group) => (
+            <div key={group.id} className="profile-card">
+              <Link href={`/groups/${group.id}`} style={{ textDecoration: "none", color: "inherit" }}>
+                <div className="profile-card-header">
+                  <div className="profile-avatar other" style={{ fontSize: "1.4rem" }}>
+                    {getGroupIcon(group.group_type)}
+                  </div>
+                  <div>
+                    <div className="profile-card-name">{group.name}</div>
+                    <div className="profile-card-relation">{group.member_count} members</div>
+                  </div>
+                </div>
+                {group.description && (
+                  <div style={{ fontSize: "0.82rem", color: "var(--text-muted)", margin: "0.5rem 0" }}>
+                    {group.description}
+                  </div>
+                )}
+                <div className="profile-tags">
+                  {group.group_goals?.slice(0, 3).map((goal) => (
+                    <span key={goal} className="tag tag-goal">{goal}</span>
+                  ))}
+                </div>
+              </Link>
+
+              <div style={{ display: "flex", gap: "0.5rem", marginTop: "1rem" }}>
+                <Link href={`/groups/${group.id}`} className="btn btn-secondary btn-sm" style={{ flex: 1, textDecoration: "none", textAlign: "center" }}>
+                  📋 View
+                </Link>
+                <button className="btn btn-secondary btn-sm" onClick={() => handleEditGroup(group.id)}>
+                  ✏️
+                </button>
+                <button className="btn btn-danger btn-sm" onClick={() => handleDeleteGroup(group.id, group.name)}>
+                  🗑️
+                </button>
+              </div>
+            </div>
+          ))}
+
+          <div className="add-profile-card" onClick={() => { setEditProfile(undefined); setCreateTab("profile"); setShowModal(true); }}>
             <span className="icon">➕</span>
-            <span>Add Profile</span>
+            <span>Add Profile / Group</span>
           </div>
         </div>
       )}
 
       {showModal && (
-        <ProfileFormModal
-          profile={editProfile}
-          onClose={() => { setShowModal(false); setEditProfile(undefined); }}
-          onSave={() => { setShowModal(false); setEditProfile(undefined); loadProfiles(); }}
-        />
+        editProfile || createTab === "profile" ? (
+          <ProfileFormModal
+            profile={editProfile}
+            defaultCountryIso={defaultCountryIso}
+            createTab={createTab}
+            onSwitchToGroup={() => { resetGroupForm(); setCreateTab("group"); }}
+            onClose={() => { setShowModal(false); setEditProfile(undefined); }}
+            onSave={() => { setShowModal(false); setEditProfile(undefined); loadProfiles(); }}
+          />
+        ) : (
+          <div className="modal-overlay" onClick={() => { setShowModal(false); setEditProfile(undefined); resetGroupForm(); }}>
+            <div className="modal" onClick={(e) => e.stopPropagation()} style={{ maxWidth: "760px" }}>
+              <div className="modal-header">
+                <h2>{editingGroupId ? "Edit Group" : "Add Group"}</h2>
+                <button className="modal-close" onClick={() => { setShowModal(false); setEditProfile(undefined); resetGroupForm(); }}>✕</button>
+              </div>
+              <div style={{ display: "flex", gap: "0.5rem", padding: "0 1.5rem 1rem", flexWrap: "wrap" }}>
+                <button type="button" className="btn btn-secondary" onClick={() => setCreateTab("profile")}>Add Profile</button>
+                <button type="button" className="btn btn-primary">Add Group</button>
+              </div>
+              <form onSubmit={handleSaveGroup}>
+                <div className="modal-body">
+                  {groupError && <div className="form-error" style={{ marginBottom: "1rem" }}>{groupError}</div>}
+                  <div style={{ display: "flex", flexDirection: "column", gap: "1rem" }}>
+                    <div className="form-group">
+                      <label className="form-label">Group Name *</label>
+                      <input className="form-input" value={groupName} onChange={(e) => setGroupName(e.target.value)} placeholder="e.g. Family Dinner Plan" required />
+                    </div>
+                    <div className="form-group">
+                      <label className="form-label">Description</label>
+                      <input className="form-input" value={groupDescription} onChange={(e) => setGroupDescription(e.target.value)} placeholder="Optional description" />
+                    </div>
+                    <div className="form-group">
+                      <label className="form-label">Group Type</label>
+                      <div className="plan-type-options">
+                        {GROUP_TYPES.map((type) => (
+                          <button key={type.value} type="button" className={`plan-type-btn ${groupType === type.value ? "active" : ""}`} onClick={() => setGroupType(type.value)}>
+                            {type.label}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                    <div className="form-group">
+                      <label className="form-label">Select Members * (min 2)</label>
+                      <div className="focus-areas">
+                        {selectableProfiles.map((profile) => (
+                          <button key={profile.id} type="button" className={`focus-chip ${selectedMembers.includes(profile.id) ? "active" : ""}`} onClick={() => toggleMember(profile.id)}>
+                            {profile.name}{Number(profile.is_archived || 0) === 1 ? " (Archived)" : ""}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                    <div className="form-group">
+                      <label className="form-label">Shared Goals</label>
+                      <div className="focus-areas">
+                        {GROUP_GOALS.map((goal) => (
+                          <button key={goal} type="button" className={`focus-chip ${groupGoals.includes(goal) ? "active" : ""}`} onClick={() => toggleGoal(goal)}>
+                            {goal}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  </div>
+                </div>
+                <div className="modal-footer">
+                  <button type="button" className="btn btn-secondary" onClick={() => { setShowModal(false); resetGroupForm(); }}>Cancel</button>
+                  <button type="submit" className="btn btn-primary" disabled={groupSaving}>
+                    {groupSaving ? (editingGroupId ? "Saving..." : "Creating...") : (editingGroupId ? "Save Group" : "Create Group")}
+                  </button>
+                </div>
+              </form>
+            </div>
+          </div>
+        )
       )}
     </div>
   );

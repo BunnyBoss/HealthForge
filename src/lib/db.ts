@@ -30,6 +30,7 @@ function initSchema() {
       user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
       name TEXT NOT NULL,
       relationship TEXT DEFAULT 'self',
+      phone_number TEXT,
       age INTEGER,
       gender TEXT,
       height_cm REAL,
@@ -40,6 +41,7 @@ function initSchema() {
       allergies TEXT DEFAULT '[]',
       medications TEXT DEFAULT '[]',
       goals TEXT DEFAULT '[]',
+      is_archived INTEGER DEFAULT 0,
       additional_notes TEXT DEFAULT '',
       created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
       updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
@@ -61,6 +63,7 @@ function initSchema() {
       id TEXT PRIMARY KEY,
       user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
       profile_id TEXT NOT NULL REFERENCES profiles(id) ON DELETE CASCADE,
+      group_id TEXT REFERENCES profile_groups(id) ON DELETE CASCADE,
       plan_id TEXT REFERENCES health_plans(id) ON DELETE SET NULL,
       title TEXT NOT NULL,
       created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
@@ -71,6 +74,7 @@ function initSchema() {
       id TEXT PRIMARY KEY,
       session_id TEXT NOT NULL REFERENCES chat_sessions(id) ON DELETE CASCADE,
       profile_id TEXT NOT NULL REFERENCES profiles(id) ON DELETE CASCADE,
+      group_id TEXT REFERENCES profile_groups(id) ON DELETE CASCADE,
       user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
       role TEXT NOT NULL,
       content TEXT NOT NULL,
@@ -163,6 +167,20 @@ function initSchema() {
     // Column already exists
   }
 
+  // Add phone_number to profiles if not exists
+  try {
+    db.exec(`ALTER TABLE profiles ADD COLUMN phone_number TEXT`);
+  } catch {
+    // Column already exists
+  }
+
+  // Add is_archived to profiles if not exists
+  try {
+    db.exec(`ALTER TABLE profiles ADD COLUMN is_archived INTEGER DEFAULT 0`);
+  } catch {
+    // Column already exists
+  }
+
   // Add admin_phone to user_settings if not exists
   try {
     db.exec(`ALTER TABLE user_settings ADD COLUMN admin_phone TEXT`);
@@ -180,6 +198,8 @@ function initSchema() {
   // Add user_id and plan_id to chat_sessions if not exists
   try { db.exec(`ALTER TABLE chat_sessions ADD COLUMN user_id TEXT REFERENCES users(id) ON DELETE CASCADE`); } catch {}
   try { db.exec(`ALTER TABLE chat_sessions ADD COLUMN plan_id TEXT REFERENCES health_plans(id) ON DELETE SET NULL`); } catch {}
+  try { db.exec(`ALTER TABLE chat_sessions ADD COLUMN group_id TEXT REFERENCES profile_groups(id) ON DELETE CASCADE`); } catch {}
+  try { db.exec(`ALTER TABLE chat_messages ADD COLUMN group_id TEXT REFERENCES profile_groups(id) ON DELETE CASCADE`); } catch {}
 
   // Backfill legacy chat_sessions.user_id from owning profile
   db.exec(`

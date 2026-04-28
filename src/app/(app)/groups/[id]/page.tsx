@@ -3,6 +3,7 @@
 import { useEffect, useState, use } from "react";
 import Link from "next/link";
 import CommunicationsTab from "@/components/CommunicationsTab";
+import PlanDocument from "@/components/PlanDocument";
 
 interface Profile {
   id: string;
@@ -29,11 +30,19 @@ interface GroupData {
 interface Plan {
   id: string;
   title: string;
+  plan_type: string;
   content: string;
   model_used: string;
   created_at: string;
   focus_areas: string[];
   isTemp?: boolean;
+}
+
+interface ChatMessage {
+  id: string;
+  role: string;
+  content: string;
+  created_at: string;
 }
 
 const FOCUS_AREAS = [
@@ -136,12 +145,232 @@ export default function GroupDetailPage({ params }: { params: Promise<{ id: stri
     }
   };
 
+  // Chat Sessions state
+  const [sessions, setSessions] = useState<{ id: string; title: string; updated_at: string; plan_id?: string | null }[]>([]);
+  const [activeSessionId, setActiveSessionId] = useState<string | null>(null);
+  const [selectedChatPlanId, setSelectedChatPlanId] = useState<string>("");
+  const [pendingNewChat, setPendingNewChat] = useState(false);
+
+  // Chat state
+  const [messages, setMessages] = useState<ChatMessage[]>([]);
+  const [chatInput, setChatInput] = useState("");
+  const [streaming, setStreaming] = useState(false);
+  const [streamedContent, setStreamedContent] = useState("");
+  const [chatPlanDraft, setChatPlanDraft] = useState<Plan | null>(null);
+  const [chatPlanBusy, setChatPlanBusy] = useState(false);
+  const [chatPlanError, setChatPlanError] = useState("");
+
   const getRelationIcon = (rel: string) => {
     const icons: Record<string, string> = {
       self: "🧑", spouse: "💑", child: "👶", parent: "👨‍🦳", sibling: "👫",
       friend: "🤝", colleague: "💼", other: "👤",
     };
     return icons[rel] || "👤";
+  };
+
+  useEffect(() => {
+    if (activeTab === "chat") {
+      if (plans.length === 0) {
+        fetch(`/api/groups/${id}/plan`)
+          .then((r) => r.json())
+          .then((data) => setPlans(Array.isArray(data) ? data : []))
+          .catch(() => {});
+      }
+      fetch(`/api/chat/sessions?groupId=${id}`)
+        .then((r) => r.json())
+        .then((data) => {
+          const sessionsList = Array.isArray(data) ? data : [];
+          setSessions(sessionsList);
+          if (sessionsList.length > 0 && !activeSessionId && !selectedChatPlanId && !pendingNewChat) {
+            setActiveSessionId(sessionsList[0].id);
+            setSelectedChatPlanId(sessionsList[0].plan_id || "");
+          }
+        })
+        .catch(() => {});
+    }
+  }, [activeTab, id, plans.length, activeSessionId, selectedChatPlanId, pendingNewChat]);
+
+  useEffect(() => {
+    if (activeTab === "chat" && activeSessionId) {
+      fetch(`/api/chat?sessionId=${activeSessionId}`)
+        .then((r) => r.json())
+        .then((data) => setMessages(Array.isArray(data) ? data : []))
+        .catch(() => {});
+    } else if (activeTab === "chat" && !activeSessionId) {
+      setMessages([]);
+    }
+  }, [activeTab, activeSessionId]);
+
+  useEffect(() => {
+    if (!activeSessionId) return;
+    const session = sessions.find((s) => s.id === activeSessionId);
+    if (session?.plan_id) {
+      setSelectedChatPlanId(session.plan_id);
+    }
+  }, [activeSessionId, sessions]);
+
+  const startNewChat = () => {
+    setActiveSessionId(null);
+    setMessages([]);
+    setPendingNewChat(true);
+    setChatPlanDraft(null);
+    setChatPlanError("");
+  };
+
+  const openChatWithPlan = (plan: { id: string; title: string }) => {
+    setSelectedChatPlanId(plan.id);
+    setActiveSessionId(null);
+    setMessages([]);
+    setPendingNewChat(true);
+    setChatPlanDraft(null);
+    setChatPlanError("");
+    setActiveTab("chat");
+  };
+
+  const sendMessage = async () => {
+    if (!chatInput.trim() || streaming) return;
+
+    const userMsg = chatInput.trim();
+    setChatInput("");
+    setMessages((prev) => [
+      ...prev,
+      { id: Date.now().toString(), role: "user", content: userMsg, created_at: new Date().toISOString() },
+    ]);
+    setStreaming(true);
+    setStreamedContent("");
+
+    try {
+      const res = await fetch("/api/chat", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ groupId: id, message: userMsg, sessionId: activeSessionId, planId: selectedChatPlanId || null }),
+      });
+
+      const newSessionId = res.headers.get("X-Session-ID");
+      if (newSessionId && newSessionId !== activeSessionId) {
+        setActiveSessionId(newSessionId);
+        setPendingNewChat(false);
+        fetch(`/api/chat/sessions?groupId=${id}`)
+          .then((r) => r.json())
+          .then((data) => setSessions(Array.isArray(data) ? data : []));
+      }
+
+      if (!res.ok) {
+        const data = await res.json();
+        setMessages((prev) => [
+          ...prev,
+          { id: Date.now().toString(), role: "assistant", content: `❌ Error: ${data.error}`, created_at: new Date().toISOString() },
+        ]);
+        setStreaming(false);
+        return;
+      }
+
+      const reader = res.body?.getReader();
+      const decoder = new TextDecoder();
+      let fullContent = "";
+
+      if (reader) {
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+
+          const chunk = decoder.decode(value, { stream: true });
+          const lines = chunk.split("\n");
+
+          for (const line of lines) {
+            if (line.startsWith("data: ") && line !== "data: [DONE]") {
+              try {
+                const json = JSON.parse(line.slice(6));
+                const content = json.choices?.[0]?.delta?.content;
+                if (content) {
+                  fullContent += content;
+                  setStreamedContent(fullContent);
+                }
+              } catch {
+                // skip
+              }
+            }
+          }
+        }
+      }
+
+      if (fullContent) {
+        setMessages((prev) => [
+          ...prev,
+          { id: Date.now().toString(), role: "assistant", content: fullContent, created_at: new Date().toISOString() },
+        ]);
+      }
+      setStreamedContent("");
+    } catch {
+      setMessages((prev) => [
+        ...prev,
+        { id: Date.now().toString(), role: "assistant", content: "❌ Failed to connect to AI. Check your LLM settings.", created_at: new Date().toISOString() },
+      ]);
+    } finally {
+      setStreaming(false);
+    }
+  };
+
+  const createPlanFromChat = async () => {
+    if (!activeSessionId) {
+      setChatPlanError("Start or open a chat session first.");
+      return;
+    }
+    setChatPlanBusy(true);
+    setChatPlanError("");
+    try {
+      const res = await fetch("/api/chat/session-plan", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          groupId: id,
+          sessionId: activeSessionId,
+          planId: selectedChatPlanId || null,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        setChatPlanError(data.error || "Failed to create plan draft from chat");
+        return;
+      }
+      setChatPlanDraft(data);
+    } catch {
+      setChatPlanError("Failed to create plan draft from chat.");
+    } finally {
+      setChatPlanBusy(false);
+    }
+  };
+
+  const saveChatPlanDraft = async () => {
+    if (!chatPlanDraft) return;
+    setChatPlanBusy(true);
+    setChatPlanError("");
+    try {
+      const res = await fetch(`/api/groups/${id}/plan`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          planType: chatPlanDraft.plan_type || "custom",
+          focusAreas: chatPlanDraft.focus_areas || [],
+          action: "save",
+          content: chatPlanDraft.content,
+          title: chatPlanDraft.title,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        setChatPlanError(data.error || "Failed to save chat-customized group plan");
+        return;
+      }
+      setPlans((prev) => [data, ...prev]);
+      setActivePlan(data);
+      setActiveTab("plan");
+      setChatPlanDraft(null);
+    } catch {
+      setChatPlanError("Failed to save chat-customized group plan.");
+    } finally {
+      setChatPlanBusy(false);
+    }
   };
 
   if (loading) {
@@ -154,7 +383,7 @@ export default function GroupDetailPage({ params }: { params: Promise<{ id: stri
         <div className="empty-state">
           <div className="icon">❌</div>
           <h3>Group not found</h3>
-          <Link href="/groups" className="btn btn-primary">Back to Groups</Link>
+          <Link href="/profiles" className="btn btn-primary">Back to Profiles</Link>
         </div>
       </div>
     );
@@ -168,7 +397,7 @@ export default function GroupDetailPage({ params }: { params: Promise<{ id: stri
 
   return (
     <div className="page-container animate-fade-in">
-      <Link href="/groups" className="back-link">← Back to Groups</Link>
+      <Link href="/profiles" className="back-link">← Back to Profiles</Link>
 
       <div className="profile-detail-header">
         <div className="profile-detail-avatar profile-avatar other" style={{ fontSize: "1.6rem" }}>
@@ -182,14 +411,15 @@ export default function GroupDetailPage({ params }: { params: Promise<{ id: stri
           </div>
         </div>
         <div className="profile-detail-actions">
+          <button onClick={() => setActiveTab("chat")} className="btn btn-secondary">💬 Group Chat</button>
           <button onClick={() => setActiveTab("plan")} className="btn btn-primary">🧬 Generate Group Plan</button>
         </div>
       </div>
 
       <div className="tabs">
-        {["overview", "plan", "plans-notifications"].map((tab) => (
+        {["overview", "plan", "plans-notifications", "chat"].map((tab) => (
           <button key={tab} className={`tab ${activeTab === tab ? "active" : ""}`} onClick={() => setActiveTab(tab)}>
-            {tab === "overview" ? "📋 Overview" : tab === "plan" ? "📑 Plan" : "📊 Plans & Notifications"}
+            {tab === "overview" ? "📋 Overview" : tab === "plan" ? "📑 Plan" : tab === "plans-notifications" ? "📊 Plans & Notifications" : "💬 Chat"}
           </button>
         ))}
       </div>
@@ -311,12 +541,15 @@ export default function GroupDetailPage({ params }: { params: Promise<{ id: stri
                 </div>
               ) : activePlan ? (
                 <div className="animate-fade-in">
-                  <h1 style={{ color: "var(--accent-primary)", marginBottom: "0.5rem" }}>{activePlan.title}</h1>
-                  <div style={{ fontSize: "0.8rem", color: "var(--text-muted)", marginBottom: "1.5rem" }}>
-                    Generated on {new Date(activePlan.created_at).toLocaleString()} · Model: {activePlan.model_used}
-                    {activePlan.isTemp && <span style={{ color: "var(--accent-primary)", marginLeft: "0.5rem", fontWeight: 600 }}>[Unsaved Preview]</span>}
-                  </div>
-                  <div className="plan-markdown" dangerouslySetInnerHTML={{ __html: simpleMarkdown(activePlan.content) }} />
+                  <PlanDocument
+                    title={activePlan.title}
+                    content={activePlan.content}
+                    createdAt={activePlan.created_at}
+                    modelUsed={activePlan.model_used}
+                    focusAreas={activePlan.focus_areas}
+                    planId={activePlan.id}
+                    previewLabel={activePlan.isTemp ? "Unsaved Preview" : null}
+                  />
                   {activePlan.isTemp && (
                     <div style={{ marginTop: "2rem", padding: "1.5rem", background: "var(--bg-card)", borderRadius: "var(--radius-md)", border: "1px solid var(--border-default)", textAlign: "center" }}>
                       <h3 style={{ marginBottom: "0.5rem" }}>💾 Save this Plan?</h3>
@@ -329,11 +562,14 @@ export default function GroupDetailPage({ params }: { params: Promise<{ id: stri
                 </div>
               ) : plans.length > 0 ? (
                 <div className="animate-fade-in">
-                  <h1 style={{ color: "var(--accent-primary)", marginBottom: "0.5rem" }}>{plans[0].title}</h1>
-                  <div style={{ fontSize: "0.8rem", color: "var(--text-muted)", marginBottom: "1.5rem" }}>
-                    Generated on {new Date(plans[0].created_at).toLocaleString()} · Model: {plans[0].model_used}
-                  </div>
-                  <div className="plan-markdown" dangerouslySetInnerHTML={{ __html: simpleMarkdown(plans[0].content) }} />
+                  <PlanDocument
+                    title={plans[0].title}
+                    content={plans[0].content}
+                    createdAt={plans[0].created_at}
+                    modelUsed={plans[0].model_used}
+                    focusAreas={plans[0].focus_areas}
+                    planId={plans[0].id}
+                  />
                 </div>
               ) : (
                 <div className="empty-state">
@@ -352,7 +588,162 @@ export default function GroupDetailPage({ params }: { params: Promise<{ id: stri
           <CommunicationsTab
             groupId={group.id}
             entityName={group.name}
+            onOpenChatWithPlan={openChatWithPlan}
           />
+        </div>
+      )}
+
+      {activeTab === "chat" && (
+        <div className="animate-fade-in">
+          <div className="disclaimer">
+            <span className="icon">⚠️</span>
+            <div>
+              You&apos;re chatting with full context for group <strong>{group.name}</strong>.
+              The AI considers all member health data and conflicts. Always verify with a healthcare professional.
+            </div>
+          </div>
+
+          <div className="health-info-card" style={{ marginBottom: "1rem", padding: "0.85rem" }}>
+            <div className="form-group" style={{ marginBottom: 0 }}>
+              <label className="form-label">Chat Plan Context (Optional)</label>
+              <select className="form-select" value={selectedChatPlanId} onChange={(e) => setSelectedChatPlanId(e.target.value)}>
+                <option value="">Group health data only</option>
+                {plans.map((plan) => (
+                  <option key={plan.id} value={plan.id}>
+                    {plan.title} ({plan.id.slice(0, 8)}…)
+                  </option>
+                ))}
+              </select>
+            </div>
+          </div>
+
+          <div className="health-info-card" style={{ marginBottom: "1rem", padding: "0.85rem" }}>
+            <div style={{ display: "flex", justifyContent: "space-between", gap: "0.75rem", alignItems: "center", flexWrap: "wrap" }}>
+              <div>
+                <div style={{ fontWeight: 700, marginBottom: "0.2rem" }}>Customize Group Plan From This Chat</div>
+                <div style={{ color: "var(--text-muted)", fontSize: "0.82rem" }}>
+                  Turn this conversation into an updated group plan draft, then save it into Plans.
+                </div>
+              </div>
+              <button className="btn btn-secondary" onClick={createPlanFromChat} disabled={chatPlanBusy || !activeSessionId}>
+                {chatPlanBusy ? "Creating..." : "Create Plan Draft"}
+              </button>
+            </div>
+            {chatPlanError && <div className="form-error" style={{ marginTop: "0.75rem" }}>{chatPlanError}</div>}
+          </div>
+
+          {chatPlanDraft && (
+            <div className="health-info-card" style={{ marginBottom: "1rem" }}>
+              <PlanDocument
+                title={chatPlanDraft.title}
+                content={chatPlanDraft.content}
+                createdAt={chatPlanDraft.created_at}
+                modelUsed={chatPlanDraft.model_used}
+                planType={chatPlanDraft.plan_type}
+                focusAreas={chatPlanDraft.focus_areas}
+                previewLabel="Draft From Chat"
+              />
+              <div style={{ marginTop: "1rem", display: "flex", gap: "0.75rem", flexWrap: "wrap" }}>
+                <button className="btn btn-primary" onClick={saveChatPlanDraft} disabled={chatPlanBusy}>
+                  {chatPlanBusy ? "Saving..." : "Save To Plans"}
+                </button>
+                <button className="btn btn-secondary" onClick={() => setChatPlanDraft(null)} disabled={chatPlanBusy}>
+                  Discard Draft
+                </button>
+              </div>
+            </div>
+          )}
+
+          <div className="chat-wrapper">
+            <div className="chat-sidebar">
+              <div className="chat-sidebar-header">
+                <button className="btn btn-primary btn-full btn-sm" onClick={startNewChat}>
+                  ➕ New Chat
+                </button>
+              </div>
+              <div className="chat-session-list">
+                {sessions.map((s) => (
+                  <div
+                    key={s.id}
+                    className={`chat-session-item ${activeSessionId === s.id ? "active" : ""}`}
+                    onClick={() => {
+                      setPendingNewChat(false);
+                      setActiveSessionId(s.id);
+                      if (s.plan_id) setSelectedChatPlanId(s.plan_id);
+                    }}
+                  >
+                    {s.title}
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            <div className="chat-container">
+              <div className="chat-messages">
+                {messages.length === 0 && !streaming && (
+                  <div className="chat-empty">
+                    <div className="icon">💬</div>
+                    <h3>Start a group conversation</h3>
+                    <p>Ask about diet, activity, schedules, and conflict-aware health changes for this group.</p>
+                  </div>
+                )}
+
+                {messages.map((msg) => (
+                  <div key={msg.id} className={`chat-message ${msg.role}`}>
+                    <div className="chat-message-avatar">
+                      {msg.role === "assistant" ? "🤖" : "👤"}
+                    </div>
+                    <div className="chat-bubble">
+                      <div dangerouslySetInnerHTML={{ __html: simpleMarkdown(msg.content) }} />
+                    </div>
+                  </div>
+                ))}
+
+                {streaming && streamedContent && (
+                  <div className="chat-message assistant">
+                    <div className="chat-message-avatar">🤖</div>
+                    <div className="chat-bubble">
+                      <div dangerouslySetInnerHTML={{ __html: simpleMarkdown(streamedContent) }} />
+                    </div>
+                  </div>
+                )}
+
+                {streaming && !streamedContent && (
+                  <div className="chat-message assistant">
+                    <div className="chat-message-avatar">🤖</div>
+                    <div className="chat-bubble">
+                      <div className="typing-indicator">
+                        <span /><span /><span />
+                      </div>
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              <div className="chat-input-area">
+                <textarea
+                  className="chat-input"
+                  value={chatInput}
+                  onChange={(e) => setChatInput(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" && !e.shiftKey) {
+                      e.preventDefault();
+                      sendMessage();
+                    }
+                  }}
+                  placeholder={`Ask about ${group.name} group health...`}
+                  rows={1}
+                />
+                <button
+                  className="chat-send-btn"
+                  onClick={sendMessage}
+                  disabled={streaming || !chatInput.trim()}
+                >
+                  ➤
+                </button>
+              </div>
+            </div>
+          </div>
         </div>
       )}
     </div>
@@ -361,8 +752,10 @@ export default function GroupDetailPage({ params }: { params: Promise<{ id: stri
 
 function simpleMarkdown(text: string): string {
   if (!text) return "";
-  let html = text
-    .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
+  return text
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
     .replace(/^#### (.+)$/gm, "<h4>$1</h4>")
     .replace(/^### (.+)$/gm, "<h3>$1</h3>")
     .replace(/^## (.+)$/gm, "<h2>$1</h2>")
@@ -376,5 +769,4 @@ function simpleMarkdown(text: string): string {
     .replace(/((?:<li>.*<\/li>\n?)+)/g, "<ul>$1</ul>")
     .replace(/\n\n/g, "<br><br>")
     .replace(/\n/g, "<br>");
-  return html;
 }

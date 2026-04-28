@@ -3,6 +3,7 @@
 import { useEffect, useState, use } from "react";
 import Link from "next/link";
 import CommunicationsTab from "@/components/CommunicationsTab";
+import PlanDocument from "@/components/PlanDocument";
 
 interface Profile {
   id: string;
@@ -19,6 +20,7 @@ interface Profile {
   medications: string[];
   goals: string[];
   additional_notes?: string;
+  phone_number?: string | null;
 }
 
 interface Plan {
@@ -68,12 +70,16 @@ export default function ProfileDetailPage({ params }: { params: Promise<{ id: st
   const [sessions, setSessions] = useState<{id: string, title: string, updated_at: string, plan_id?: string | null}[]>([]);
   const [activeSessionId, setActiveSessionId] = useState<string | null>(null);
   const [selectedChatPlanId, setSelectedChatPlanId] = useState<string>("");
+  const [pendingNewChat, setPendingNewChat] = useState(false);
 
   // Chat state
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [chatInput, setChatInput] = useState("");
   const [streaming, setStreaming] = useState(false);
   const [streamedContent, setStreamedContent] = useState("");
+  const [chatPlanDraft, setChatPlanDraft] = useState<Plan | null>(null);
+  const [chatPlanBusy, setChatPlanBusy] = useState(false);
+  const [chatPlanError, setChatPlanError] = useState("");
 
   useEffect(() => {
     fetch(`/api/profiles/${id}`)
@@ -107,14 +113,14 @@ export default function ProfileDetailPage({ params }: { params: Promise<{ id: st
         .then((data) => {
           const sessionsList = Array.isArray(data) ? data : [];
           setSessions(sessionsList);
-          if (sessionsList.length > 0 && !activeSessionId) {
+          if (sessionsList.length > 0 && !activeSessionId && !selectedChatPlanId && !pendingNewChat) {
             setActiveSessionId(sessionsList[0].id);
             setSelectedChatPlanId(sessionsList[0].plan_id || "");
           }
         })
         .catch(() => {});
     }
-  }, [activeTab, id, plans.length]); // Intentionally left out activeSessionId here to not re-trigger session fetch
+  }, [activeTab, id, plans.length, activeSessionId, selectedChatPlanId, pendingNewChat]);
 
   useEffect(() => {
     if (activeTab === "chat" && activeSessionId) {
@@ -223,6 +229,7 @@ export default function ProfileDetailPage({ params }: { params: Promise<{ id: st
       const newSessionId = res.headers.get("X-Session-ID");
       if (newSessionId && newSessionId !== activeSessionId) {
         setActiveSessionId(newSessionId);
+        setPendingNewChat(false);
         // Refresh sessions list
         fetch(`/api/chat/sessions?profileId=${id}`)
           .then((r) => r.json())
@@ -320,13 +327,82 @@ export default function ProfileDetailPage({ params }: { params: Promise<{ id: st
   const startNewChat = () => {
     setActiveSessionId(null);
     setMessages([]);
+    setPendingNewChat(true);
+    setChatPlanDraft(null);
+    setChatPlanError("");
   };
 
   const openChatWithPlan = (plan: { id: string; title: string }) => {
     setSelectedChatPlanId(plan.id);
     setActiveSessionId(null);
     setMessages([]);
+    setPendingNewChat(true);
+    setChatPlanDraft(null);
+    setChatPlanError("");
     setActiveTab("chat");
+  };
+
+  const createPlanFromChat = async () => {
+    if (!activeSessionId) {
+      setChatPlanError("Start or open a chat session first.");
+      return;
+    }
+    setChatPlanBusy(true);
+    setChatPlanError("");
+    try {
+      const res = await fetch("/api/chat/session-plan", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          profileId: id,
+          sessionId: activeSessionId,
+          planId: selectedChatPlanId || null,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        setChatPlanError(data.error || "Failed to create plan draft from chat");
+        return;
+      }
+      setChatPlanDraft(data);
+    } catch {
+      setChatPlanError("Failed to create plan draft from chat.");
+    } finally {
+      setChatPlanBusy(false);
+    }
+  };
+
+  const saveChatPlanDraft = async () => {
+    if (!chatPlanDraft) return;
+    setChatPlanBusy(true);
+    setChatPlanError("");
+    try {
+      const res = await fetch("/api/plans", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          profileId: id,
+          planType: chatPlanDraft.plan_type || "custom",
+          focusAreas: chatPlanDraft.focus_areas || [],
+          action: "save",
+          content: chatPlanDraft.content,
+          title: chatPlanDraft.title,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        setChatPlanError(data.error || "Failed to save chat-customized plan");
+        return;
+      }
+      setPlans((prev) => [data, ...prev]);
+      setActivePlan(data);
+      setActiveTab("plan");
+      setChatPlanDraft(null);
+    } catch {
+      setChatPlanError("Failed to save chat-customized plan.");
+    } finally {
+      setChatPlanBusy(false);
+    }
   };
 
   return (
@@ -442,6 +518,15 @@ export default function ProfileDetailPage({ params }: { params: Promise<{ id: st
                 </div>
               </div>
             )}
+
+            {profile.phone_number && (
+              <div style={{ marginTop: "1rem" }}>
+                <div className="section-title">📱 Mobile Number</div>
+                <div className="health-info-card">
+                  <div className="value">+{profile.phone_number}</div>
+                </div>
+              </div>
+            )}
           </div>
         </div>
       )}
@@ -508,16 +593,15 @@ export default function ProfileDetailPage({ params }: { params: Promise<{ id: st
                 </div>
               ) : activePlan ? (
                 <div className="animate-fade-in">
-                  <h1 style={{ color: "var(--accent-primary)", marginBottom: "0.5rem" }}>
-                    {activePlan.title}
-                  </h1>
-                  <div style={{ fontSize: "0.8rem", color: "var(--text-muted)", marginBottom: "1.5rem" }}>
-                    Generated on {new Date(activePlan.created_at).toLocaleString()} · Model: {activePlan.model_used}
-                    {activePlan.isTemp && <span style={{ color: "var(--accent-primary)", marginLeft: "0.5rem", fontWeight: 600 }}>[Unsaved Preview]</span>}
-                  </div>
-                  <div
-                    className="plan-markdown"
-                    dangerouslySetInnerHTML={{ __html: simpleMarkdown(activePlan.content) }}
+                  <PlanDocument
+                    title={activePlan.title}
+                    content={activePlan.content}
+                    createdAt={activePlan.created_at}
+                    modelUsed={activePlan.model_used}
+                    planType={activePlan.plan_type}
+                    focusAreas={activePlan.focus_areas}
+                    planId={activePlan.id}
+                    previewLabel={activePlan.isTemp ? "Unsaved Preview" : null}
                   />
                   {activePlan.isTemp && (
                     <div style={{ marginTop: "2rem", padding: "1.5rem", background: "var(--bg-card)", borderRadius: "var(--radius-md)", border: "1px solid var(--border-default)", textAlign: "center" }}>
@@ -535,11 +619,15 @@ export default function ProfileDetailPage({ params }: { params: Promise<{ id: st
                 </div>
               ) : plans.length > 0 ? (
                 <div className="animate-fade-in">
-                  <h1 style={{ color: "var(--accent-primary)", marginBottom: "0.5rem" }}>{plans[0].title}</h1>
-                  <div style={{ fontSize: "0.8rem", color: "var(--text-muted)", marginBottom: "1.5rem" }}>
-                    Generated on {new Date(plans[0].created_at).toLocaleString()} · Model: {plans[0].model_used}
-                  </div>
-                  <div className="plan-markdown" dangerouslySetInnerHTML={{ __html: simpleMarkdown(plans[0].content) }} />
+                  <PlanDocument
+                    title={plans[0].title}
+                    content={plans[0].content}
+                    createdAt={plans[0].created_at}
+                    modelUsed={plans[0].model_used}
+                    planType={plans[0].plan_type}
+                    focusAreas={plans[0].focus_areas}
+                    planId={plans[0].id}
+                  />
                 </div>
               ) : (
                 <div className="empty-state">
@@ -587,6 +675,43 @@ export default function ProfileDetailPage({ params }: { params: Promise<{ id: st
             </div>
           </div>
 
+          <div className="health-info-card" style={{ marginBottom: "1rem", padding: "0.85rem" }}>
+            <div style={{ display: "flex", justifyContent: "space-between", gap: "0.75rem", alignItems: "center", flexWrap: "wrap" }}>
+              <div>
+                <div style={{ fontWeight: 700, marginBottom: "0.2rem" }}>Customize Plan From This Chat</div>
+                <div style={{ color: "var(--text-muted)", fontSize: "0.82rem" }}>
+                  Turn this conversation into an updated plan draft, then save it into Plans.
+                </div>
+              </div>
+              <button className="btn btn-secondary" onClick={createPlanFromChat} disabled={chatPlanBusy || !activeSessionId}>
+                {chatPlanBusy ? "Creating..." : "Create Plan Draft"}
+              </button>
+            </div>
+            {chatPlanError && <div className="form-error" style={{ marginTop: "0.75rem" }}>{chatPlanError}</div>}
+          </div>
+
+          {chatPlanDraft && (
+            <div className="health-info-card" style={{ marginBottom: "1rem" }}>
+              <PlanDocument
+                title={chatPlanDraft.title}
+                content={chatPlanDraft.content}
+                createdAt={chatPlanDraft.created_at}
+                modelUsed={chatPlanDraft.model_used}
+                planType={chatPlanDraft.plan_type}
+                focusAreas={chatPlanDraft.focus_areas}
+                previewLabel="Draft From Chat"
+              />
+              <div style={{ marginTop: "1rem", display: "flex", gap: "0.75rem", flexWrap: "wrap" }}>
+                <button className="btn btn-primary" onClick={saveChatPlanDraft} disabled={chatPlanBusy}>
+                  {chatPlanBusy ? "Saving..." : "Save To Plans"}
+                </button>
+                <button className="btn btn-secondary" onClick={() => setChatPlanDraft(null)} disabled={chatPlanBusy}>
+                  Discard Draft
+                </button>
+              </div>
+            </div>
+          )}
+
           <div className="chat-wrapper">
             <div className="chat-sidebar">
               <div className="chat-sidebar-header">
@@ -600,6 +725,7 @@ export default function ProfileDetailPage({ params }: { params: Promise<{ id: st
                     key={s.id}
                     className={`chat-session-item ${activeSessionId === s.id ? 'active' : ''}`}
                     onClick={() => {
+                      setPendingNewChat(false);
                       setActiveSessionId(s.id);
                       if (s.plan_id) setSelectedChatPlanId(s.plan_id);
                     }}
@@ -682,34 +808,23 @@ export default function ProfileDetailPage({ params }: { params: Promise<{ id: st
   );
 }
 
-// Simple markdown to HTML converter (no external deps needed for inline rendering)
 function simpleMarkdown(text: string): string {
   if (!text) return "";
-  let html = text
-    // Escape HTML
+  return text
     .replace(/&/g, "&amp;")
     .replace(/</g, "&lt;")
     .replace(/>/g, "&gt;")
-    // Headers
     .replace(/^#### (.+)$/gm, "<h4>$1</h4>")
     .replace(/^### (.+)$/gm, "<h3>$1</h3>")
     .replace(/^## (.+)$/gm, "<h2>$1</h2>")
     .replace(/^# (.+)$/gm, "<h1>$1</h1>")
-    // Bold and italic
     .replace(/\*\*\*(.+?)\*\*\*/g, "<strong><em>$1</em></strong>")
     .replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>")
     .replace(/\*(.+?)\*/g, "<em>$1</em>")
-    // Horizontal rules
     .replace(/^---$/gm, "<hr>")
-    // Unordered lists
     .replace(/^[\s]*[-*] (.+)$/gm, "<li>$1</li>")
-    // Ordered lists
     .replace(/^[\s]*\d+\. (.+)$/gm, "<li>$1</li>")
-    // Wrap consecutive <li> in <ul>
     .replace(/((?:<li>.*<\/li>\n?)+)/g, "<ul>$1</ul>")
-    // Line breaks
     .replace(/\n\n/g, "<br><br>")
     .replace(/\n/g, "<br>");
-
-  return html;
 }
