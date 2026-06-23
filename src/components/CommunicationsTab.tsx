@@ -227,8 +227,12 @@ export default function PlansNotificationsTab({ profileId, groupId, entityName, 
     return () => clearInterval(timer);
   }, [fetchMessages]);
 
-  const selectedPlan = plans.find((p) => p.id === selectedPlanId) ?? plans[0] ?? null;
-  const openPlan = plans.find((p) => p.id === openPlanId) || null;
+  const visiblePlans = useMemo(
+    () => (hideArchivedPlans ? plans.filter((p) => Number(p.is_archived || 0) === 0) : plans),
+    [hideArchivedPlans, plans]
+  );
+  const selectedPlan = visiblePlans.find((p) => p.id === selectedPlanId) ?? visiblePlans[0] ?? null;
+  const openPlan = visiblePlans.find((p) => p.id === openPlanId) || null;
 
   function toggleNotificationFocus(area: string) {
     setNotificationFocusAreas((prev) =>
@@ -244,14 +248,11 @@ export default function PlansNotificationsTab({ profileId, groupId, entityName, 
 
   const filteredPlans = useMemo(() => {
     const q = planSearch.trim().toLowerCase();
-    const visible = hideArchivedPlans
-      ? plans.filter((p) => Number(p.is_archived || 0) === 0)
-      : plans;
     const base = q
-      ? visible.filter((p) =>
+      ? visiblePlans.filter((p) =>
         `${p.title} ${p.plan_type} ${p.model_used} ${p.content}`.toLowerCase().includes(q)
       )
-      : visible;
+      : visiblePlans;
 
     const sorted = [...base].sort((a, b) => {
       const dir = planSortDir === "asc" ? 1 : -1;
@@ -263,7 +264,7 @@ export default function PlansNotificationsTab({ profileId, groupId, entityName, 
       return av.localeCompare(bv) * dir;
     });
     return sorted;
-  }, [plans, planSearch, planSortBy, planSortDir, hideArchivedPlans]);
+  }, [planSearch, planSortBy, planSortDir, visiblePlans]);
 
   const filteredMessages = useMemo(() => {
     const q = messageSearch.trim().toLowerCase();
@@ -312,14 +313,15 @@ export default function PlansNotificationsTab({ profileId, groupId, entityName, 
   }, [messageSearch, messagePageSize, messageSortBy, messageSortDir, statusFilters]);
 
   useEffect(() => {
-    if (selectedPlanId && !plans.some((p) => p.id === selectedPlanId)) {
+    const visibleIds = new Set(visiblePlans.map((p) => p.id));
+    if (selectedPlanId && !visibleIds.has(selectedPlanId)) {
       setSelectedPlanId("");
     }
-    if (openPlanId && !plans.some((p) => p.id === openPlanId)) {
+    if (openPlanId && !visibleIds.has(openPlanId)) {
       setOpenPlanId(null);
     }
-    setSelectedPlanIds((prev) => prev.filter((id) => plans.some((p) => p.id === id)));
-  }, [plans, selectedPlanId, openPlanId]);
+    setSelectedPlanIds((prev) => prev.filter((id) => visibleIds.has(id)));
+  }, [visiblePlans, selectedPlanId, openPlanId]);
 
   useEffect(() => {
     setSelectedMessageIds((prev) => prev.filter((id) => messages.some((m) => m.id === id)));
@@ -357,6 +359,7 @@ export default function PlansNotificationsTab({ profileId, groupId, entityName, 
           plan_content: selectedPlan.content,
           plan_id: selectedPlan.id,
           plan_title: selectedPlan.title,
+          user_timezone_offset: new Date().getTimezoneOffset(),
         }),
       });
       const data = await res.json();
@@ -685,50 +688,55 @@ export default function PlansNotificationsTab({ profileId, groupId, entityName, 
 
   return (
     <div className="animate-fade-in">
-      <div className="section-title" style={{ marginBottom: "0.75rem" }}>📑 All Plans</div>
+      {/* ── PLANS SECTION ── */}
+      <div className="comm-section-header">
+        <div className="comm-section-title">📑 Saved Plans</div>
+        <div className="comm-header-actions">
+          <button className="btn btn-secondary btn-sm" onClick={() => setHideArchivedPlans((v) => !v)}>
+            {hideArchivedPlans ? "Show Archived" : "Hide Archived"}
+          </button>
+          <button className="btn btn-primary btn-sm" onClick={() => setShowManualPlanForm((v) => !v)}>
+            {showManualPlanForm ? "✕ Cancel" : "+ Add Manual Plan"}
+          </button>
+        </div>
+      </div>
 
-      <div style={{ display: "grid", gridTemplateColumns: "2fr 1fr 1fr auto auto auto auto auto", gap: "0.5rem", marginBottom: "0.75rem" }}>
-        <input className="form-input" placeholder="Search title/type/model/content..." value={planSearch} onChange={(e) => setPlanSearch(e.target.value)} />
-        <select className="form-select" value={planSortBy} onChange={(e) => setPlanSortBy(e.target.value as PlanSortKey)}>
+      <div className="comm-toolbar">
+        <input className="form-input" placeholder="Search plans..." value={planSearch} onChange={(e) => setPlanSearch(e.target.value)} style={{ flex: "1 1 180px", minWidth: 0 }} />
+        <select className="form-select" value={planSortBy} onChange={(e) => setPlanSortBy(e.target.value as PlanSortKey)} style={{ flex: "0 0 auto", minWidth: "130px" }}>
           <option value="created_at">Sort: Created</option>
           <option value="title">Sort: Title</option>
           <option value="plan_type">Sort: Type</option>
           <option value="model_used">Sort: Model</option>
         </select>
-        <select className="form-select" value={planSortDir} onChange={(e) => setPlanSortDir(e.target.value as "asc" | "desc")}>
-          <option value="desc">Newest / Z-A</option>
-          <option value="asc">Oldest / A-Z</option>
+        <select className="form-select" value={planSortDir} onChange={(e) => setPlanSortDir(e.target.value as "asc" | "desc")} style={{ flex: "0 0 auto", minWidth: "120px" }}>
+          <option value="desc">Newest first</option>
+          <option value="asc">Oldest first</option>
         </select>
-        <button className="btn btn-secondary btn-sm" onClick={() => refreshAll()} disabled={planActionBusy}>↻ Refresh</button>
-        <button className="btn btn-secondary btn-sm" onClick={exportPlansCsv} disabled={filteredPlans.length === 0}>⬇ Export CSV</button>
-        <button className="btn btn-secondary btn-sm" onClick={() => { setPlanSearch(""); setPlanSortBy("created_at"); setPlanSortDir("desc"); setHideArchivedPlans(true); }}>Reset</button>
-        <button className="btn btn-secondary btn-sm" onClick={() => setHideArchivedPlans((v) => !v)}>
-          {hideArchivedPlans ? "Show Archived" : "Hide Archived"}
-        </button>
-        <button className="btn btn-primary btn-sm" onClick={() => setShowManualPlanForm((v) => !v)}>
-          {showManualPlanForm ? "✕ Cancel" : "+ Add Manual Plan"}
-        </button>
+        <div className="comm-toolbar-btns">
+          <button className="btn btn-secondary btn-sm" onClick={() => refreshAll()} disabled={planActionBusy} title="Refresh">↻</button>
+          <button className="btn btn-secondary btn-sm" onClick={exportPlansCsv} disabled={filteredPlans.length === 0} title="Export CSV">⬇</button>
+          <button className="btn btn-secondary btn-sm" onClick={() => { setPlanSearch(""); setPlanSortBy("created_at"); setPlanSortDir("desc"); setHideArchivedPlans(true); }} title="Reset filters">Reset</button>
+        </div>
       </div>
 
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "0.6rem", gap: "0.5rem", flexWrap: "wrap" }}>
-        <div style={{ fontSize: "0.8rem", color: "var(--text-muted)" }}>
-          Showing {filteredPlans.length === 0 ? 0 : (currentPlanPage - 1) * planPageSize + 1}-{Math.min(currentPlanPage * planPageSize, filteredPlans.length)} of {filteredPlans.length} filtered plan(s)
-        </div>
-        <div style={{ display: "flex", gap: "0.5rem", alignItems: "center" }}>
-          <select className="form-select" value={planPageSize} onChange={(e) => setPlanPageSize(Number(e.target.value))}>
+      <div className="comm-meta-row">
+        <span className="comm-meta-count">
+          {filteredPlans.length === 0 ? "No plans" : `${(currentPlanPage - 1) * planPageSize + 1}–${Math.min(currentPlanPage * planPageSize, filteredPlans.length)} of ${filteredPlans.length} plan(s)`}
+        </span>
+        <div className="comm-meta-actions">
+          <select className="form-select" value={planPageSize} onChange={(e) => setPlanPageSize(Number(e.target.value))} style={{ minWidth: "90px" }}>
             <option value={5}>5 / page</option>
             <option value={10}>10 / page</option>
             <option value={20}>20 / page</option>
           </select>
-          <button className="btn btn-secondary btn-sm" disabled={selectedPlanIds.length === 0 || planActionBusy} onClick={() => archivePlans(selectedPlanIds, true)}>
-            Archive Selected ({selectedPlanIds.length})
-          </button>
-          <button className="btn btn-secondary btn-sm" disabled={selectedPlanIds.length === 0 || planActionBusy} onClick={() => archivePlans(selectedPlanIds, false)}>
-            Unarchive Selected ({selectedPlanIds.length})
-          </button>
-          <button className="btn btn-danger btn-sm" disabled={selectedPlanIds.length === 0 || planActionBusy} onClick={() => deletePlans(selectedPlanIds)}>
-            🗑 Delete Selected ({selectedPlanIds.length})
-          </button>
+          {selectedPlanIds.length > 0 && (
+            <>
+              <button className="btn btn-secondary btn-sm" disabled={planActionBusy} onClick={() => archivePlans(selectedPlanIds, true)}>Archive ({selectedPlanIds.length})</button>
+              <button className="btn btn-secondary btn-sm" disabled={planActionBusy} onClick={() => archivePlans(selectedPlanIds, false)}>Unarchive ({selectedPlanIds.length})</button>
+              <button className="btn btn-danger btn-sm" disabled={planActionBusy} onClick={() => deletePlans(selectedPlanIds)}>🗑 Delete ({selectedPlanIds.length})</button>
+            </>
+          )}
         </div>
       </div>
 
@@ -758,9 +766,9 @@ export default function PlansNotificationsTab({ profileId, groupId, entityName, 
       {planError && <div className="form-error" style={{ marginBottom: "0.75rem" }}>{planError}</div>}
       {planSuccess && <div style={{ marginBottom: "0.75rem", color: "#22c55e", fontSize: "0.82rem", fontWeight: 600 }}>{planSuccess}</div>}
 
-      {plans.length === 0 ? (
+      {visiblePlans.length === 0 ? (
         <div style={{ color: "var(--text-muted)", fontSize: "0.85rem", marginBottom: "2rem", padding: "1rem", textAlign: "center", background: "var(--bg-card)", borderRadius: "var(--radius-md)", border: "1px solid var(--border-subtle)" }}>
-          No plans generated yet.
+          {plans.length === 0 ? "No plans generated yet." : "Archived plans are hidden. Click “Show Archived” to view them."}
         </div>
       ) : (
         <div style={{ overflowX: "auto", marginBottom: "1rem" }}>
@@ -837,11 +845,15 @@ export default function PlansNotificationsTab({ profileId, groupId, entityName, 
         </div>
       )}
 
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "0.75rem", flexWrap: "wrap", gap: "0.5rem" }}>
-        <div className="section-title" style={{ margin: 0 }}>📬 Notification Queue</div>
-        <div style={{ fontSize: "0.78rem", color: "var(--text-muted)" }}>Auto-refresh every 10 seconds</div>
-        <div style={{ display: "flex", gap: "0.5rem" }}>
-          {messages.length > 0 && <button className="btn btn-secondary btn-sm" onClick={clearAllMsgs} disabled={messageActionBusy}>🗑️ Clear All</button>}
+      {/* ── NOTIFICATIONS SECTION ── */}
+      <div className="comm-section-divider" />
+      <div className="comm-section-header">
+        <div>
+          <div className="comm-section-title">📬 Notification Queue</div>
+          <div style={{ fontSize: "0.75rem", color: "var(--text-muted)", marginTop: "0.15rem" }}>Auto-refresh every 10 seconds</div>
+        </div>
+        <div className="comm-header-actions">
+          {messages.length > 0 && <button className="btn btn-secondary btn-sm" onClick={clearAllMsgs} disabled={messageActionBusy}>Clear All</button>}
           <button
             className="btn btn-primary btn-sm"
             onClick={() => {
@@ -849,8 +861,8 @@ export default function PlansNotificationsTab({ profileId, groupId, entityName, 
               setGenError("");
               setGenSuccess("");
             }}
-            disabled={plans.length === 0}
-            title={plans.length === 0 ? "Generate a health plan first" : ""}
+            disabled={visiblePlans.length === 0}
+            title={visiblePlans.length === 0 ? "Generate or show a health plan first" : ""}
           >
             {showForm ? "✕ Cancel" : "✨ Generate Messages"}
           </button>
@@ -874,22 +886,22 @@ export default function PlansNotificationsTab({ profileId, groupId, entityName, 
         </div>
       )}
 
-      {plans.length === 0 && (
+      {visiblePlans.length === 0 && (
         <div className="disclaimer" style={{ marginBottom: "1rem" }}>
           <span className="icon">ℹ️</span>
-          <span>Generate a health plan first, then schedule notifications.</span>
+          <span>{plans.length === 0 ? "Generate a health plan first, then schedule notifications." : "Archived plans are hidden, so notifications cannot be generated from them."}</span>
         </div>
       )}
 
-      {showForm && plans.length > 0 && (
+      {showForm && visiblePlans.length > 0 && (
         <div className="health-info-card" style={{ marginBottom: "1.5rem" }}>
           <h3 style={{ marginBottom: "1rem" }}>✨ Generate AI Message Schedule</h3>
           <form onSubmit={generate}>
             <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(190px, 1fr))", gap: "0.75rem" }}>
               <div className="form-group">
                 <label className="form-label">Based on Plan</label>
-                <select className="form-select" value={selectedPlanId} onChange={(e) => setSelectedPlanId(e.target.value)}>
-                  {plans.map((p) => <option key={p.id} value={p.id}>{p.title} ({new Date(p.created_at).toLocaleDateString()})</option>)}
+                <select className="form-select" value={selectedPlan?.id || ""} onChange={(e) => setSelectedPlanId(e.target.value)}>
+                  {visiblePlans.map((p) => <option key={p.id} value={p.id}>{p.title} ({new Date(p.created_at).toLocaleDateString()})</option>)}
                 </select>
               </div>
               <div className="form-group">
@@ -1008,50 +1020,54 @@ export default function PlansNotificationsTab({ profileId, groupId, entityName, 
         </div>
       )}
 
-      <div style={{ display: "grid", gridTemplateColumns: "2fr 1fr 1fr auto auto auto", gap: "0.5rem", marginBottom: "0.75rem" }}>
-        <input className="form-input" placeholder="Search id/plan/message/phone/status..." value={messageSearch} onChange={(e) => setMessageSearch(e.target.value)} />
-        <select className="form-select" value={messageSortBy} onChange={(e) => setMessageSortBy(e.target.value as MessageSortKey)}>
+      <div className="comm-toolbar">
+        <input className="form-input" placeholder="Search notifications..." value={messageSearch} onChange={(e) => setMessageSearch(e.target.value)} style={{ flex: "1 1 180px", minWidth: 0 }} />
+        <select className="form-select" value={messageSortBy} onChange={(e) => setMessageSortBy(e.target.value as MessageSortKey)} style={{ flex: "0 0 auto", minWidth: "130px" }}>
           <option value="scheduled_for">Sort: Scheduled</option>
           <option value="status">Sort: Status</option>
           <option value="plan_title">Sort: Plan</option>
           <option value="target_phone">Sort: Phone</option>
           <option value="created_at">Sort: Created</option>
         </select>
-        <select className="form-select" value={messageSortDir} onChange={(e) => setMessageSortDir(e.target.value as "asc" | "desc")}>
-          <option value="asc">Oldest / A-Z</option>
-          <option value="desc">Newest / Z-A</option>
+        <select className="form-select" value={messageSortDir} onChange={(e) => setMessageSortDir(e.target.value as "asc" | "desc")} style={{ flex: "0 0 auto", minWidth: "120px" }}>
+          <option value="asc">Oldest first</option>
+          <option value="desc">Newest first</option>
         </select>
-        <button className="btn btn-secondary btn-sm" onClick={() => fetchMessages()} disabled={messageActionBusy}>↻ Refresh</button>
-        <button className="btn btn-secondary btn-sm" onClick={exportMessagesCsv} disabled={filteredMessages.length === 0}>⬇ Export CSV</button>
-        <button className="btn btn-secondary btn-sm" onClick={resetMessageFilters}>Reset</button>
+        <div className="comm-toolbar-btns">
+          <button className="btn btn-secondary btn-sm" onClick={() => fetchMessages()} disabled={messageActionBusy} title="Refresh">↻</button>
+          <button className="btn btn-secondary btn-sm" onClick={exportMessagesCsv} disabled={filteredMessages.length === 0} title="Export CSV">⬇</button>
+          <button className="btn btn-secondary btn-sm" onClick={resetMessageFilters} title="Reset filters">Reset</button>
+        </div>
       </div>
 
-      <div style={{ display: "flex", gap: "0.45rem", flexWrap: "wrap", marginBottom: "0.6rem" }}>
+      <div className="comm-status-filters">
         {QUEUE_STATUS_OPTIONS.map((status) => (
           <button
             key={status}
-            className="btn btn-secondary btn-sm"
+            className={`comm-status-chip ${statusFilters[status] ? "active" : ""}`}
             onClick={() => toggleStatusFilter(status)}
-            style={{ opacity: statusFilters[status] ? 1 : 0.45 }}
+            style={{ "--chip-color": STATUS_BADGE[status].color } as React.CSSProperties}
           >
             {STATUS_BADGE[status].label}
           </button>
         ))}
       </div>
 
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "0.6rem", gap: "0.5rem", flexWrap: "wrap" }}>
-        <div style={{ fontSize: "0.8rem", color: "var(--text-muted)" }}>
-          Showing {filteredMessages.length === 0 ? 0 : (currentMessagePage - 1) * messagePageSize + 1}-{Math.min(currentMessagePage * messagePageSize, filteredMessages.length)} of {filteredMessages.length} filtered notification(s)
-        </div>
-        <div style={{ display: "flex", gap: "0.5rem", alignItems: "center" }}>
-          <select className="form-select" value={messagePageSize} onChange={(e) => setMessagePageSize(Number(e.target.value))}>
+      <div className="comm-meta-row">
+        <span className="comm-meta-count">
+          {filteredMessages.length === 0 ? "No notifications" : `${(currentMessagePage - 1) * messagePageSize + 1}–${Math.min(currentMessagePage * messagePageSize, filteredMessages.length)} of ${filteredMessages.length} notification(s)`}
+        </span>
+        <div className="comm-meta-actions">
+          <select className="form-select" value={messagePageSize} onChange={(e) => setMessagePageSize(Number(e.target.value))} style={{ minWidth: "90px" }}>
             <option value={5}>5 / page</option>
             <option value={10}>10 / page</option>
             <option value={20}>20 / page</option>
           </select>
-          <button className="btn btn-danger btn-sm" disabled={selectedMessageIds.length === 0 || messageActionBusy} onClick={() => deleteSelectedMessages(selectedMessageIds)}>
-            🗑 Delete Selected ({selectedMessageIds.length})
-          </button>
+          {selectedMessageIds.length > 0 && (
+            <button className="btn btn-danger btn-sm" disabled={messageActionBusy} onClick={() => deleteSelectedMessages(selectedMessageIds)}>
+              🗑 Delete ({selectedMessageIds.length})
+            </button>
+          )}
         </div>
       </div>
 
@@ -1060,7 +1076,7 @@ export default function PlansNotificationsTab({ profileId, groupId, entityName, 
 
       {filteredMessages.length === 0 ? (
         <div style={{ color: "var(--text-muted)", fontSize: "0.85rem", padding: "1.5rem", textAlign: "center", background: "var(--bg-card)", borderRadius: "var(--radius-md)", border: "1px solid var(--border-subtle)" }}>
-          No notifications match current filters. {plans.length > 0 ? "Click \"Generate Messages\" to create a queue." : ""}
+          No notifications match current filters. {visiblePlans.length > 0 ? "Click \"Generate Messages\" to create a queue." : ""}
         </div>
       ) : (
         <div style={{ overflowX: "auto" }}>

@@ -17,7 +17,7 @@ export async function POST(req: NextRequest) {
   }
 
   try {
-    const { profileId, groupId, message, sessionId: providedSessionId, planId } = await req.json();
+    const { profileId, groupId, message, sessionId: providedSessionId, planId, unsavedPlanContext } = await req.json();
 
     if ((!profileId && !groupId) || !message) {
       return NextResponse.json(
@@ -31,6 +31,7 @@ export async function POST(req: NextRequest) {
     let sessionProfileId = profileId as string | null;
     let selectedPlanContent: string | null = null;
     let selectedPlanMeta: { id: string; title: string } | null = null;
+    let validDbPlanId: string | null = null;
 
     if (groupId) {
       const group = db
@@ -70,7 +71,10 @@ export async function POST(req: NextRequest) {
         additional_notes: profile.additional_notes as string | undefined,
       }));
 
-      if (planId) {
+      if (unsavedPlanContext) {
+        selectedPlanMeta = { id: planId || "temp", title: unsavedPlanContext.title };
+        selectedPlanContent = unsavedPlanContext.content;
+      } else if (planId) {
         const selectedPlan = db
           .prepare(`
             SELECT id, title, content
@@ -83,6 +87,7 @@ export async function POST(req: NextRequest) {
         }
         selectedPlanMeta = { id: selectedPlan.id, title: selectedPlan.title };
         selectedPlanContent = selectedPlan.content;
+        validDbPlanId = selectedPlan.id;
       }
 
       systemPrompt = buildGroupSystemPrompt(profilesData) + (selectedPlanContent
@@ -112,7 +117,10 @@ export async function POST(req: NextRequest) {
         additional_notes: profile.additional_notes as string | undefined,
       };
 
-      if (planId) {
+      if (unsavedPlanContext) {
+        selectedPlanMeta = { id: planId || "temp", title: unsavedPlanContext.title };
+        selectedPlanContent = unsavedPlanContext.content;
+      } else if (planId) {
         const selectedPlan = db
           .prepare(`
             SELECT id, title, content
@@ -126,6 +134,7 @@ export async function POST(req: NextRequest) {
         }
         selectedPlanMeta = { id: selectedPlan.id, title: selectedPlan.title };
         selectedPlanContent = selectedPlan.content;
+        validDbPlanId = selectedPlan.id;
       }
 
       systemPrompt = buildSystemPrompt(profileData) + (selectedPlanContent
@@ -140,7 +149,7 @@ export async function POST(req: NextRequest) {
       const title = message.length > 30 ? message.substring(0, 30) + '...' : message;
       db.prepare(
         "INSERT INTO chat_sessions (id, user_id, profile_id, group_id, plan_id, title) VALUES (?, ?, ?, ?, ?, ?)"
-      ).run(sessionId, session.user.id, sessionProfileId, groupId || null, selectedPlanMeta?.id || null, title);
+      ).run(sessionId, session.user.id, sessionProfileId, groupId || null, validDbPlanId, title);
     } else {
       const existingSession = groupId
         ? db.prepare("SELECT id FROM chat_sessions WHERE id = ? AND user_id = ? AND group_id = ?")
@@ -154,7 +163,7 @@ export async function POST(req: NextRequest) {
       // Update session timestamp and optionally selected plan link
       db.prepare(
         "UPDATE chat_sessions SET updated_at = CURRENT_TIMESTAMP, plan_id = COALESCE(?, plan_id) WHERE id = ?"
-      ).run(selectedPlanMeta?.id || null, sessionId);
+      ).run(validDbPlanId, sessionId);
     }
 
     // Get chat history for this session (last 20 messages for context)

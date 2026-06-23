@@ -1,7 +1,7 @@
 import Database from "better-sqlite3";
 import path from "path";
 
-const dbPath = path.resolve(process.cwd(), "healthforge.db");
+const dbPath = process.env.DB_PATH || path.resolve(process.cwd(), "healthforge.db");
 
 let db: Database.Database;
 
@@ -76,6 +76,7 @@ function initSchema() {
       group_id TEXT REFERENCES profile_groups(id) ON DELETE CASCADE,
       plan_id TEXT REFERENCES health_plans(id) ON DELETE SET NULL,
       title TEXT NOT NULL,
+      is_archived INTEGER DEFAULT 0,
       created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
       updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
     );
@@ -210,6 +211,7 @@ function initSchema() {
   try { db.exec(`ALTER TABLE chat_sessions ADD COLUMN plan_id TEXT REFERENCES health_plans(id) ON DELETE SET NULL`); } catch {}
   try { db.exec(`ALTER TABLE chat_sessions ADD COLUMN group_id TEXT REFERENCES profile_groups(id) ON DELETE CASCADE`); } catch {}
   try { db.exec(`ALTER TABLE chat_messages ADD COLUMN group_id TEXT REFERENCES profile_groups(id) ON DELETE CASCADE`); } catch {}
+  try { db.exec(`ALTER TABLE chat_sessions ADD COLUMN is_archived INTEGER DEFAULT 0`); } catch {}
 
   // Backfill legacy chat_sessions.user_id from owning profile
   db.exec(`

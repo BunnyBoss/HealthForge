@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
+import SearchableMultiSelect from "@/components/SearchableMultiSelect";
 
 interface Profile {
   id: string;
@@ -57,18 +58,6 @@ export default function GroupsPage() {
       setLoading(false);
     }).catch(() => setLoading(false));
   }, []);
-
-  const toggleGoal = (goal: string) => {
-    setGroupGoals((prev) =>
-      prev.includes(goal) ? prev.filter((g) => g !== goal) : [...prev, goal]
-    );
-  };
-
-  const toggleMember = (id: string) => {
-    setSelectedMembers((prev) =>
-      prev.includes(id) ? prev.filter((m) => m !== id) : [...prev, id]
-    );
-  };
 
   const handleCreate = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -126,6 +115,11 @@ export default function GroupsPage() {
     };
     return icons[type] || "⚡";
   };
+
+  const memberOptions = profiles.map((profile) => ({
+    value: profile.id,
+    label: profile.name,
+  }));
 
   return (
     <div className="page-container animate-fade-in">
@@ -231,28 +225,25 @@ export default function GroupsPage() {
                   </div>
 
                   <div className="form-group">
-                    <label className="form-label">Select Members * (min 2)</label>
-                    <div className="focus-areas">
-                      {profiles.map((p) => (
-                        <button key={p.id} type="button" className={`focus-chip ${selectedMembers.includes(p.id) ? "active" : ""}`} onClick={() => toggleMember(p.id)}>
-                          {p.name}
-                        </button>
-                      ))}
-                    </div>
-                    <span style={{ fontSize: "0.75rem", color: "var(--text-muted)", marginTop: "0.25rem" }}>
-                      {selectedMembers.length} selected
-                    </span>
+                    <SearchableMultiSelect
+                      label="Select Members * (min 2)"
+                      options={memberOptions}
+                      value={selectedMembers}
+                      onChange={setSelectedMembers}
+                      placeholder="Search members..."
+                      allowCustom={false}
+                      helperText={`${selectedMembers.length} selected`}
+                    />
                   </div>
 
                   <div className="form-group">
-                    <label className="form-label">Shared Goals</label>
-                    <div className="focus-areas">
-                      {GROUP_GOALS.map((g) => (
-                        <button key={g} type="button" className={`focus-chip ${groupGoals.includes(g) ? "active" : ""}`} onClick={() => toggleGoal(g)}>
-                          {g}
-                        </button>
-                      ))}
-                    </div>
+                    <SearchableMultiSelect
+                      label="Shared Goals"
+                      options={GROUP_GOALS}
+                      value={groupGoals}
+                      onChange={setGroupGoals}
+                      placeholder="Search group goals or add one..."
+                    />
                   </div>
                 </div>
               </div>

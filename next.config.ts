@@ -3,6 +3,7 @@ import type { NextConfig } from "next";
 const nextConfig: NextConfig = {
   reactStrictMode: true,
   poweredByHeader: false,
+  output: "standalone",
   serverExternalPackages: ["better-sqlite3", "@whiskeysockets/baileys", "pino"],
   async headers() {
     return [

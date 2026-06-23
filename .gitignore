@@ -42,3 +42,5 @@ wa_auth/*
 
 # application logs
 *.log
+
+bk/

@@ -72,19 +72,15 @@ export default function SettingsPage() {
     setTesting(true);
     setTestResult("");
     try {
-      const res = await fetch(`${apiUrl}/v1/models`, {
-        headers: apiKey ? { Authorization: `Bearer ${apiKey}` } : {},
+      const res = await fetch(`/api/settings/test-connection`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ api_url: apiUrl, api_key: apiKey })
       });
-      if (res.ok) {
-        const data = await res.json();
-        const modelCount = data.data?.length || 0;
-        const modelNames = data.data?.slice(0, 5).map((m: { id?: string }) => m.id).join(", ") || "none";
-        setTestResult(`✅ Connected! Found ${modelCount} models: ${modelNames}${modelCount > 5 ? "..." : ""}`);
-      } else {
-        setTestResult(`❌ Connection failed: ${res.status} ${res.statusText}`);
-      }
+      const data = await res.json();
+      setTestResult(data.message);
     } catch {
-      setTestResult(`❌ Cannot reach ${apiUrl}. Make sure LiteLLM proxy is running.`);
+      setTestResult(`❌ Cannot reach API. Make sure LiteLLM proxy is running.`);
     } finally {
       setTesting(false);
     }
@@ -112,27 +108,39 @@ export default function SettingsPage() {
             </div>
             <div className="form-group">
               <label className="form-label">API Key (Optional)</label>
-              <input
-                className="form-input"
-                type="password"
-                value={apiKey}
-                onChange={(e) => setApiKey(e.target.value)}
-                placeholder={hasApiKey ? "Leave blank to keep existing key, or enter a new one" : "sk-... or leave empty"}
-              />
-              <div style={{ display: "flex", gap: "0.5rem", alignItems: "center", marginTop: "0.5rem", flexWrap: "wrap" }}>
-                <span style={{ fontSize: "0.8rem", color: "var(--text-muted)" }}>
-                  Stored key: {hasApiKey ? "Configured" : "Not set"}
-                </span>
+              <div style={{ display: "flex", alignItems: "center", gap: "0.5rem", flexWrap: "wrap" }}>
+                <input
+                  className="form-input"
+                  type="password"
+                  value={apiKey}
+                  onChange={(e) => {
+                    setApiKey(e.target.value);
+                    if (e.target.value) setClearApiKey(false);
+                  }}
+                  disabled={clearApiKey}
+                  placeholder={hasApiKey && !clearApiKey ? "●●●●●●●● (Stored)" : "sk-... or leave empty"}
+                  style={{ flex: "1 1 200px" }}
+                />
                 {hasApiKey && (
-                  <label style={{ display: "inline-flex", alignItems: "center", gap: "0.35rem", fontSize: "0.8rem", color: "var(--text-muted)" }}>
-                    <input
-                      type="checkbox"
-                      checked={clearApiKey}
-                      onChange={(e) => setClearApiKey(e.target.checked)}
-                    />
-                    Clear stored key on save
-                  </label>
+                  <button 
+                    type="button" 
+                    className={`btn btn-sm ${clearApiKey ? "btn-danger" : "btn-secondary"}`}
+                    onClick={() => {
+                      setClearApiKey(!clearApiKey);
+                      if (!clearApiKey) setApiKey("");
+                    }}
+                    style={{ flex: "0 0 auto" }}
+                  >
+                    {clearApiKey ? "Cancel Clear" : "🗑️ Clear Stored Key"}
+                  </button>
                 )}
+              </div>
+              <div style={{ fontSize: "0.78rem", color: "var(--text-muted)", marginTop: "0.4rem" }}>
+                {hasApiKey && !clearApiKey 
+                  ? "A key is currently stored. Leave the input blank to keep using it, or enter a new one to replace it."
+                  : clearApiKey 
+                    ? <span style={{ color: "var(--danger)" }}>⚠️ The stored API key will be deleted upon saving.</span>
+                    : "No key is currently stored."}
               </div>
             </div>
             <div className="form-group">

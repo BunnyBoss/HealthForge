@@ -32,6 +32,11 @@ export function getAiConfig(userId?: string): AiConfig {
     }
   }
 
+  // Map localhost to host.docker.internal to allow seamless Docker transitions ONLY when running in Docker
+  if (process.env.DOCKER_CONTAINER === "true" && defaults.apiUrl.includes("://localhost")) {
+    defaults.apiUrl = defaults.apiUrl.replace("://localhost", "://host.docker.internal");
+  }
+
   return defaults;
 }
 
@@ -436,10 +441,11 @@ Rules:
 - The first notification for each queued day must be an early-morning summary of the full selected-focus-area plan for that day.
 - If a plan item has a time, preserve it.
 - If a plan item has no explicit time, assign a practical local time.
-- Keep every message clear, specific, and operational.
-- Preserve important detail like quantity, duration, sets/reps, meal portions, hydration volume, medication timing, or any other actionable amount.
-- Include the plan title, short plan identifier, plan day number, and the scheduled time context directly in the message text.
-- Use 24-hour HH:MM format for "time".
+- Keep every message friendly, concise, and natural, like a text from a helpful health coach. Use emojis naturally.
+- Focus on the action (e.g. "Good morning! Time for your 20-min yoga. 🧘‍♀️") without sounding like a robot.
+- Preserve important details like quantity, duration, sets/reps, or meal portions, but weave them naturally into the message.
+- DO NOT include raw plan IDs, raw times, or formal headers inside the message text. Make it read like a direct text message.
+- Use 24-hour HH:MM format for the "time" field in the JSON (not in the message text).
 - Return only unique and meaningful reminders (no duplicates).
 ${customContext ? `\nAdditional context/instructions: ${customContext}` : ""}
 

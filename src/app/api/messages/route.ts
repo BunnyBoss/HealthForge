@@ -103,6 +103,7 @@ export async function POST(req: NextRequest) {
       plan_title,
       target_country_iso,
       cc_country_iso,
+      user_timezone_offset,
     } = await req.json();
 
     if ((profile_id && group_id) || (!profile_id && !group_id)) {
@@ -288,16 +289,16 @@ export async function POST(req: NextRequest) {
       return a.time.localeCompare(b.time);
     });
 
+    const dateParts = requestedStartDate.split("-").map(Number);
+    const tzOffset = Number(user_timezone_offset || 0);
+
     for (const item of sortedQueueItems) {
-      const scheduledFor = new Date(startDate);
-      scheduledFor.setDate(startDate.getDate() + item.day_offset);
       const [hour, minute] = item.time.split(":").map(Number);
-      scheduledFor.setHours(
-        Number.isFinite(hour) ? hour : fallbackHour,
-        Number.isFinite(minute) ? minute : fallbackMinute,
-        0,
-        0
-      );
+      const h = Number.isFinite(hour) ? hour : fallbackHour;
+      const m = Number.isFinite(minute) ? minute : fallbackMinute;
+
+      const scheduledFor = new Date(Date.UTC(dateParts[0], dateParts[1] - 1, dateParts[2] + item.day_offset, h, m, 0, 0));
+      scheduledFor.setMinutes(scheduledFor.getMinutes() + tzOffset);
 
       for (const targetDigits of uniqueTargets) {
         const id = randomUUID();

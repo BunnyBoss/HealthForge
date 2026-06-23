@@ -10,7 +10,7 @@ export async function POST(req: NextRequest) {
   }
 
   try {
-    const { profileId, groupId, sessionId, title, planId } = await req.json();
+    const { profileId, groupId, sessionId, title, planId, unsavedPlanContext } = await req.json();
     if ((!profileId && !groupId) || !sessionId) {
       return NextResponse.json({ error: "profileId or groupId and sessionId are required" }, { status: 400 });
     }
@@ -80,10 +80,18 @@ export async function POST(req: NextRequest) {
         additional_notes: profile.additional_notes as string | undefined,
       }));
 
-      const basePlan = selectedPlanId
+      const dbBasePlan = selectedPlanId
         ? db.prepare("SELECT id, title, content, focus_areas, plan_type FROM health_plans WHERE id = ? AND group_id = ?")
           .get(selectedPlanId, groupId) as { id: string; title: string; content: string; focus_areas?: string; plan_type?: string } | undefined
         : undefined;
+
+      const basePlan = unsavedPlanContext ? {
+        id: "temp",
+        title: unsavedPlanContext.title,
+        content: unsavedPlanContext.content,
+        focus_areas: unsavedPlanContext.focus_areas ? JSON.stringify(unsavedPlanContext.focus_areas) : undefined,
+        plan_type: unsavedPlanContext.plan_type
+      } : dbBasePlan;
 
       responseTitle = title || `Customized Group Plan for ${group.name as string}`;
       responsePlanType = basePlan?.plan_type || "custom";
@@ -130,10 +138,18 @@ ${chatTranscript.substring(0, 10000)}`;
         additional_notes: profile.additional_notes as string | undefined,
       };
 
-      const basePlan = selectedPlanId
+      const dbBasePlan = selectedPlanId
         ? db.prepare("SELECT id, title, content, focus_areas, plan_type FROM health_plans WHERE id = ? AND profile_id = ? AND (group_id IS NULL OR group_id = '')")
           .get(selectedPlanId, profileId) as { id: string; title: string; content: string; focus_areas?: string; plan_type?: string } | undefined
         : undefined;
+
+      const basePlan = unsavedPlanContext ? {
+        id: "temp",
+        title: unsavedPlanContext.title,
+        content: unsavedPlanContext.content,
+        focus_areas: unsavedPlanContext.focus_areas ? JSON.stringify(unsavedPlanContext.focus_areas) : undefined,
+        plan_type: unsavedPlanContext.plan_type
+      } : dbBasePlan;
 
       responseTitle = title || `Customized Plan for ${profileData.name}`;
       responsePlanType = basePlan?.plan_type || "custom";

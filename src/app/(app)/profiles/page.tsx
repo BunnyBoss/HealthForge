@@ -5,6 +5,7 @@ import { useSearchParams } from "next/navigation";
 import Link from "next/link";
 import { COUNTRY_OPTIONS, normalizeCountryIso, type CountryIso } from "@/lib/phone";
 import PedigreeGraph from "@/components/PedigreeGraph";
+import SearchableMultiSelect from "@/components/SearchableMultiSelect";
 
 interface Profile {
   id: string;
@@ -64,6 +65,12 @@ const ALLERGIES = [
   "NSAIDs", "Latex", "Pollen", "Dust Mites",
 ];
 
+const MEDICATION_SUGGESTIONS = [
+  "Metformin", "Insulin", "Amlodipine", "Losartan", "Atorvastatin",
+  "Levothyroxine", "Aspirin", "Omeprazole", "Salbutamol/Inhaler",
+  "Vitamin D", "Calcium", "Iron Supplement", "Cetirizine", "Paracetamol",
+];
+
 const GROUP_TYPES = [
   { value: "family_meal", label: "🍽️ Family Meal Plan" },
   { value: "workout", label: "🏋️ Group Workout" },
@@ -76,6 +83,45 @@ const GROUP_GOALS = [
   "Stress Reduction", "Heart Health", "Family Fitness", "Meal Prep Together",
   "Sugar Control", "Joint Health", "Energy Boost", "Immunity Building",
 ];
+
+function hasValue(value: unknown): boolean {
+  if (Array.isArray(value)) return value.length > 0;
+  if (typeof value === "string") return value.trim().length > 0;
+  return value !== null && value !== undefined && value !== "";
+}
+
+function calculateProfileCompleteness(profile: Profile): number {
+  const healthContext =
+    hasValue(profile.medical_conditions) ||
+    hasValue(profile.allergies) ||
+    hasValue(profile.medications) ||
+    hasValue(profile.goals) ||
+    hasValue(profile.additional_notes);
+  const checks = [
+    hasValue(profile.name),
+    hasValue(profile.relationship),
+    hasValue(profile.age),
+    hasValue(profile.gender),
+    hasValue(profile.height_cm),
+    hasValue(profile.weight_kg),
+    hasValue(profile.activity_level),
+    hasValue(profile.dietary_preference),
+    hasValue(profile.phone_number),
+    healthContext,
+  ];
+
+  return Math.round((checks.filter(Boolean).length / checks.length) * 100);
+}
+
+function getCompletenessTone(score: number): { background: string; color: string; border: string } {
+  if (score >= 80) {
+    return { background: "rgba(34,197,94,0.14)", color: "#22c55e", border: "rgba(34,197,94,0.28)" };
+  }
+  if (score >= 50) {
+    return { background: "rgba(245,158,11,0.14)", color: "#f59e0b", border: "rgba(245,158,11,0.28)" };
+  }
+  return { background: "rgba(239,68,68,0.12)", color: "#ef4444", border: "rgba(239,68,68,0.25)" };
+}
 
 function ProfileFormModal({
   profile,
@@ -109,38 +155,8 @@ function ProfileFormModal({
     phone_number: profile?.phone_number || "",
     phone_country_iso: defaultCountryIso,
   });
-  const [medInput, setMedInput] = useState("");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
-
-  const toggleArrayItem = (
-    field: "medical_conditions" | "allergies" | "goals",
-    item: string
-  ) => {
-    setForm((prev) => ({
-      ...prev,
-      [field]: prev[field].includes(item)
-        ? prev[field].filter((i) => i !== item)
-        : [...prev[field], item],
-    }));
-  };
-
-  const addMedication = () => {
-    if (medInput.trim() && !form.medications.includes(medInput.trim())) {
-      setForm((prev) => ({
-        ...prev,
-        medications: [...prev.medications, medInput.trim()],
-      }));
-      setMedInput("");
-    }
-  };
-
-  const removeMedication = (med: string) => {
-    setForm((prev) => ({
-      ...prev,
-      medications: prev.medications.filter((m) => m !== med),
-    }));
-  };
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -347,79 +363,43 @@ function ProfileFormModal({
               </div>
 
               <div className="form-group">
-                <label className="form-label">Medical Conditions</label>
-                <div className="focus-areas">
-                  {MEDICAL_CONDITIONS.map((c) => (
-                    <button
-                      key={c}
-                      type="button"
-                      className={`focus-chip ${form.medical_conditions.includes(c) ? "active" : ""
-                        }`}
-                      onClick={() => toggleArrayItem("medical_conditions", c)}
-                    >
-                      {c}
-                    </button>
-                  ))}
-                </div>
+                <SearchableMultiSelect
+                  label="Medical Conditions"
+                  options={MEDICAL_CONDITIONS}
+                  value={form.medical_conditions}
+                  onChange={(medical_conditions) => setForm({ ...form, medical_conditions })}
+                  placeholder="Search conditions or add one..."
+                />
               </div>
 
               <div className="form-group">
-                <label className="form-label">Allergies</label>
-                <div className="focus-areas">
-                  {ALLERGIES.map((a) => (
-                    <button
-                      key={a}
-                      type="button"
-                      className={`focus-chip ${form.allergies.includes(a) ? "active" : ""
-                        }`}
-                      onClick={() => toggleArrayItem("allergies", a)}
-                    >
-                      {a}
-                    </button>
-                  ))}
-                </div>
+                <SearchableMultiSelect
+                  label="Allergies"
+                  options={ALLERGIES}
+                  value={form.allergies}
+                  onChange={(allergies) => setForm({ ...form, allergies })}
+                  placeholder="Search allergies or add one..."
+                />
               </div>
 
               <div className="form-group">
-                <label className="form-label">Health Goals</label>
-                <div className="focus-areas">
-                  {GOALS.map((g) => (
-                    <button
-                      key={g}
-                      type="button"
-                      className={`focus-chip ${form.goals.includes(g) ? "active" : ""
-                        }`}
-                      onClick={() => toggleArrayItem("goals", g)}
-                    >
-                      {g}
-                    </button>
-                  ))}
-                </div>
+                <SearchableMultiSelect
+                  label="Health Goals"
+                  options={GOALS}
+                  value={form.goals}
+                  onChange={(goals) => setForm({ ...form, goals })}
+                  placeholder="Search goals or add one..."
+                />
               </div>
 
               <div className="form-group">
-                <label className="form-label">Current Medications</label>
-                <div className="tags-input">
-                  {form.medications.map((med) => (
-                    <span key={med} className="tag-item">
-                      {med}
-                      <button type="button" onClick={() => removeMedication(med)}>
-                        ×
-                      </button>
-                    </span>
-                  ))}
-                  <input
-                    value={medInput}
-                    onChange={(e) => setMedInput(e.target.value)}
-                    onKeyDown={(e) => {
-                      if (e.key === "Enter") {
-                        e.preventDefault();
-                        addMedication();
-                      }
-                    }}
-                    placeholder="Type medication & press Enter"
-                  />
-                </div>
+                <SearchableMultiSelect
+                  label="Current Medications"
+                  options={MEDICATION_SUGGESTIONS}
+                  value={form.medications}
+                  onChange={(medications) => setForm({ ...form, medications })}
+                  placeholder="Search medication or add one..."
+                />
               </div>
 
               <div className="form-group">
@@ -533,14 +513,6 @@ function ProfilesPageInner() {
     return icons[type] || "👨‍👩‍👧‍👦";
   };
 
-  const toggleGoal = (goal: string) => {
-    setGroupGoals((prev) => prev.includes(goal) ? prev.filter((item) => item !== goal) : [...prev, goal]);
-  };
-
-  const toggleMember = (id: string) => {
-    setSelectedMembers((prev) => prev.includes(id) ? prev.filter((item) => item !== id) : [...prev, id]);
-  };
-
   const resetGroupForm = () => {
     setGroupName("");
     setGroupDescription("");
@@ -631,6 +603,10 @@ function ProfilesPageInner() {
   const selectableProfiles = profiles.filter((profile) =>
     Number(profile.is_archived || 0) === 0 || selectedMembers.includes(profile.id)
   );
+  const selectableMemberOptions = selectableProfiles.map((profile) => ({
+    value: profile.id,
+    label: `${profile.name}${Number(profile.is_archived || 0) === 1 ? " (Archived)" : ""}`,
+  }));
 
   return (
     <div className="page-container animate-fade-in">
@@ -715,6 +691,12 @@ function ProfilesPageInner() {
                       {Number(profile.is_archived || 0) === 1 ? " · Archived" : ""}
                     </div>
                   </div>
+                  <span
+                    className="profile-completeness-badge"
+                    style={getCompletenessTone(calculateProfileCompleteness(profile))}
+                  >
+                    {calculateProfileCompleteness(profile)}% complete
+                  </span>
                 </div>
 
                 <div className="profile-card-stats">
@@ -858,24 +840,24 @@ function ProfilesPageInner() {
                       </div>
                     </div>
                     <div className="form-group">
-                      <label className="form-label">Select Members * (min 2)</label>
-                      <div className="focus-areas">
-                        {selectableProfiles.map((profile) => (
-                          <button key={profile.id} type="button" className={`focus-chip ${selectedMembers.includes(profile.id) ? "active" : ""}`} onClick={() => toggleMember(profile.id)}>
-                            {profile.name}{Number(profile.is_archived || 0) === 1 ? " (Archived)" : ""}
-                          </button>
-                        ))}
-                      </div>
+                      <SearchableMultiSelect
+                        label="Select Members * (min 2)"
+                        options={selectableMemberOptions}
+                        value={selectedMembers}
+                        onChange={setSelectedMembers}
+                        placeholder="Search members..."
+                        allowCustom={false}
+                        helperText={`${selectedMembers.length} selected`}
+                      />
                     </div>
                     <div className="form-group">
-                      <label className="form-label">Shared Goals</label>
-                      <div className="focus-areas">
-                        {GROUP_GOALS.map((goal) => (
-                          <button key={goal} type="button" className={`focus-chip ${groupGoals.includes(goal) ? "active" : ""}`} onClick={() => toggleGoal(goal)}>
-                            {goal}
-                          </button>
-                        ))}
-                      </div>
+                      <SearchableMultiSelect
+                        label="Shared Goals"
+                        options={GROUP_GOALS}
+                        value={groupGoals}
+                        onChange={setGroupGoals}
+                        placeholder="Search group goals or add one..."
+                      />
                     </div>
                   </div>
                 </div>

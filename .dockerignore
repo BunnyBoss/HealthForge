@@ -1,0 +1,12 @@
+Dockerfile
+.dockerignore
+node_modules
+npm-debug.log
+README.md
+.next
+.git
+.gitignore
+healthforge.db
+healthforge.db-shm
+healthforge.db-wal
+wa_auth/

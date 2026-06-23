@@ -2,7 +2,6 @@
 
 import { useEffect, useState } from "react";
 import { useSession } from "next-auth/react";
-import Link from "next/link";
 
 interface Profile {
   id: string;
@@ -83,20 +82,9 @@ export default function DashboardPage() {
         </div>
       </div>
 
-      {loading ? (
+      {loading && (
         <div className="loading-center">
           <span className="loading-spinner lg" />
-        </div>
-      ) : (
-        <div className="card" style={{ padding: "1.25rem", marginTop: "2rem" }}>
-          <h3 style={{ marginTop: 0 }}>Profile management moved to Profiles</h3>
-          <p style={{ marginBottom: "1rem", color: "var(--text-muted)" }}>
-            Use the Profiles page for adding profiles/groups and switching between grid and network views.
-          </p>
-          <div style={{ display: "flex", gap: "0.75rem", flexWrap: "wrap" }}>
-            <Link href="/profiles" className="btn btn-primary">Open Profiles</Link>
-            <Link href="/profiles?new=true" className="btn btn-secondary">Add Profile / Group</Link>
-          </div>
         </div>
       )}
     </div>

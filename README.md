@@ -161,18 +161,53 @@ npx tsx scripts/test-notification.ts <phone> <YYYY-MM-DDTHH:mm> '<message>'
 - Use a non-primary WhatsApp account for automation to reduce account-risk exposure
 - In production, set a strong `NEXTAUTH_SECRET` and point `NEXTAUTH_URL` to the deployed HTTPS domain.
 
+## Docker Deployment (Production Ready)
+
+HealthForge is fully configured for standalone Docker deployment. It uses Docker Compose with **Host Bind Mounts** to ensure seamless persistence and easy access to your database and WhatsApp session.
+
+1. Configure your environment:
+   ```bash
+   cp .env.example .env
+   # Edit .env and set NEXTAUTH_SECRET (required) and NEXTAUTH_URL
+   ```
+
+2. Build and start the container in detached mode:
+   ```bash
+   docker compose up --build -d
+   ```
+
+3. Authenticate WhatsApp:
+   Because Docker binds directly to your local `./wa_auth` folder, you can run the pairing script locally on your host machine OR inside the container:
+   ```bash
+   npx tsx scripts/connect-whatsapp.ts login
+   ```
+
+### Docker proxy auto-discovery
+When running via Docker, HealthForge auto-detects it is containerized via the `DOCKER_CONTAINER=true` environment variable. If your LLM URL is set to `http://localhost:...`, HealthForge will automatically intelligently map it to `host.docker.internal` so it can reach the proxy running on your host machine without any manual IP configuration.
+
+To view logs:
+```bash
+docker compose logs -f
+```
+
+To stop the container:
+```bash
+docker compose down
+```
+
 ## Production Checklist
 
-1. Set production env values (`NEXTAUTH_SECRET`, `NEXTAUTH_URL`, LLM URL/key/model).
-2. Run `npm run check` in CI before deploy.
-3. Run behind HTTPS reverse proxy.
-4. Persist and back up `healthforge.db` and `wa_auth/`.
-5. Run a single scheduler instance to avoid duplicate message sends.
+1. Set production env values (`NEXTAUTH_SECRET`, `NEXTAUTH_URL`).
+2. Deploy using Docker Compose to ensure a clean, isolated environment.
+3. Run behind an HTTPS reverse proxy (like Nginx, Caddy, or Cloudflare Tunnels).
+4. Do not run multiple containers of the same app instance simultaneously to avoid duplicate background scheduler sends.
 
 ## Troubleshooting
 
-- If notifications remain `pending`, verify:
-  - WhatsApp is connected (`status` command)
-  - `scheduled_for` is in the past/current time
-  - app server is running (scheduler active)
-- If AI generation fails, check API URL/key/model in Settings.
+- If notifications remain `pending` or fail to update to `delivered`:
+  - Ensure WhatsApp is connected (`status` command).
+  - Check Docker permissions: Ensure the container has write access to `./healthforge.db`. The Dockerfile runs as the default root user specifically to prevent `SQLITE_READONLY` lock errors when bind-mounting host files.
+- If AI generation fails with `Invalid model name passed`:
+  - Check your **Settings Tab** in the web interface. The "Preferred Model" selected there overrides the default `.env` model. Ensure it is correctly supported by your LLM proxy (e.g. `gpt-5.1`).
+- If dates or times feel "shifted":
+  - HealthForge scheduling is strictly **Timezone Aware**. The time selected in the UI represents your browser's local timezone. The backend converts this dynamically into UTC offsets to ensure messages fire at the exact requested local time regardless of where the Docker server is hosted.

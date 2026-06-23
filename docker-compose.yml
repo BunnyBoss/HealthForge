@@ -1,0 +1,25 @@
+version: '3.8'
+
+services:
+  healthforge:
+    build: .
+    container_name: healthforge_app
+    restart: unless-stopped
+    ports:
+      - "3001:3000"
+    environment:
+      - NODE_ENV=production
+      - DOCKER_CONTAINER=true
+      - NEXTAUTH_URL=${NEXTAUTH_URL:-http://localhost:3001}
+      - NEXTAUTH_SECRET=${NEXTAUTH_SECRET}
+      # These will act as fallbacks if not set via the settings UI
+      # - LITELLM_API_URL=${LITELLM_API_URL:-http://host.docker.internal:4000}
+      - LITELLM_API_URL=http://host.docker.internal:4000
+      - LITELLM_API_KEY=${LITELLM_API_KEY}
+      - DEFAULT_MODEL=${DEFAULT_MODEL:-gpt-5.1}
+      - DOCKER_CONTAINER=true
+    volumes:
+      - ./:/app/data
+      - ./wa_auth:/app/wa_auth
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
