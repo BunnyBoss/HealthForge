@@ -1,0 +1,12 @@
+# nodeenv installs a self-contained Node.js runtime inside this virtualenv.
+# This lets you use `python -m venv` as an alternative to Conda or nvm
+# for managing the Node.js version needed by HealthForge.
+#
+# Usage:
+#   python3 -m venv .venv
+#   source .venv/bin/activate        # Windows: .venv\Scripts\activate
+#   pip install -r requirements.txt
+#   nodeenv --node=20.19.2 --python-virtualenv
+#   npm install
+
+nodeenv==1.9.1

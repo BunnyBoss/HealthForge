@@ -1,0 +1,8 @@
+name: HealthForge
+channels:
+  - conda-forge
+  - defaults
+dependencies:
+  # Node.js runtime (matches Docker image node:20-alpine)
+  - nodejs=20.*
+  - npm

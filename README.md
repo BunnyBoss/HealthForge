@@ -49,29 +49,120 @@ wa_auth/                 # WhatsApp auth session files
 
 ## Prerequisites
 
-- Node.js 20+
-- npm 10+
-- A local/remote LLM API endpoint (OpenAI-compatible interface expected by app settings)
-- A dedicated WhatsApp number for bot automation (recommended)
+- [Miniconda or Anaconda](https://docs.conda.io/en/latest/miniconda.html) — recommended for environment isolation
+  - OR Node.js 20+ with npm 10+ installed directly
+- A local/remote LLM API endpoint (OpenAI-compatible, e.g. [LiteLLM](https://github.com/BerriAI/litellm))
+- A dedicated WhatsApp number for bot automation (strongly recommended)
+- **Native build tools** required by `better-sqlite3` and `@whiskeysockets/baileys`:
+  - Linux: `python3`, `make`, `g++` (usually pre-installed or via `build-essential`)
+  - macOS: Xcode Command Line Tools (`xcode-select --install`)
+  - Windows: `windows-build-tools` via npm
 
-## Setup
+## Installation
 
-1. Install dependencies:
+### Option A — Conda Environment (Recommended)
+
+This repo ships an `environment.yml` that pins Node.js 20 so your system Node version doesn't matter.
 
 ```bash
+# 1. Create and activate the environment
+conda env create -f environment.yml
+conda activate HealthForge
+
+# 2. Verify Node version (should print v20.x.x)
+node --version
+
+# 3. Install Node dependencies
 npm install
 ```
 
-2. Create/update local env file (`.env.local`) with auth/app values used by NextAuth.
-   You can start from `.env.example`.
+To update the environment later (e.g. after a Node version bump in `environment.yml`):
+```bash
+conda env update -f environment.yml --prune
+```
 
-3. Start dev server:
+To remove the environment:
+```bash
+conda deactivate
+conda env remove -n HealthForge
+```
+
+### Option B — Python venv (no Conda needed)
+
+If you prefer plain Python virtual environments, the `requirements.txt` installs [`nodeenv`](https://github.com/ekalinin/nodeenv), which embeds a pinned Node.js runtime directly inside the venv.
+
+**Requirements**: Python 3.8+ must be available on your system.
+
+```bash
+# 1. Create and activate a Python virtualenv
+python3 -m venv .venv
+source .venv/bin/activate        # Windows: .venv\Scripts\activate
+
+# 2. Install nodeenv from requirements.txt
+pip install -r requirements.txt
+
+# 3. Install Node.js 20 into the active venv
+nodeenv --node=20.19.2 --python-virtualenv
+
+# 4. Verify (the venv's node/npm is now active)
+node --version    # v20.x.x
+npm --version     # 10.x.x
+
+# 5. Install Node dependencies
+npm install
+```
+
+To deactivate and re-enter later:
+```bash
+deactivate           # exit the venv
+source .venv/bin/activate && nodeenv --python-virtualenv --prebuilt  # rejoin
+npm run dev
+```
+
+To delete the environment:
+```bash
+deactivate
+rm -rf .venv
+```
+
+### Option C — System Node.js
+
+If you already have Node.js 20+ installed globally:
+
+```bash
+# Verify
+node --version   # must be >= 20
+npm --version    # must be >= 10
+
+# Install dependencies
+npm install
+```
+
+### Environment Configuration
+
+Copy the example env file and fill in your values:
+
+```bash
+cp .env.example .env
+```
+
+Key variables (see `.env.example` for the full list):
+
+| Variable | Required | Description |
+|---|---|---|
+| `NEXTAUTH_SECRET` | ✅ Yes | Long random string for session signing |
+| `NEXTAUTH_URL` | ✅ Yes | App base URL (`http://localhost:3000` for local dev) |
+| `LITELLM_API_URL` | ✅ Yes | OpenAI-compatible LLM endpoint |
+| `LITELLM_API_KEY` | Optional | API key for the LLM endpoint |
+| `DEFAULT_MODEL` | Optional | Default model name (overridable per-user in Settings) |
+
+### Start Dev Server
 
 ```bash
 npm run dev
 ```
 
-4. Open `http://localhost:3000`.
+Open `http://localhost:3000`.
 
 ## Build & Run
 
