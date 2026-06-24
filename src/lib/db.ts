@@ -257,6 +257,7 @@ function initSchema() {
   `);
 
   db.exec(`CREATE INDEX IF NOT EXISTS idx_queued_messages_wa_message_id ON queued_messages(wa_message_id)`);
+  db.exec(`CREATE INDEX IF NOT EXISTS idx_queued_messages_user_wa_message_id ON queued_messages(user_id, wa_message_id)`);
   db.exec(`CREATE INDEX IF NOT EXISTS idx_profiles_user_id ON profiles(user_id)`);
   db.exec(`CREATE INDEX IF NOT EXISTS idx_profiles_user_archived ON profiles(user_id, is_archived)`);
   db.exec(`CREATE INDEX IF NOT EXISTS idx_health_plans_profile_created ON health_plans(profile_id, created_at DESC)`);

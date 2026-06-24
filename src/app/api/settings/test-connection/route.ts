@@ -35,6 +35,10 @@ export async function POST(req: NextRequest) {
       }
     }
 
+    if (!testApiKey || testApiKey.trim() === "") {
+      testApiKey = process.env.LITELLM_API_KEY || "";
+    }
+
     const headers: Record<string, string> = {
       "Content-Type": "application/json",
     };
